@@ -2,9 +2,13 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import apiRoutes from './routes/api.js';
-import { runHealthCheck } from './checker.js';
+import { initDatabase } from './db/database.js';
+import { runAllDatabaseMonitors } from './checker.js';
 
 dotenv.config();
+
+// Initialize SQLite Database
+initDatabase();
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,17 +24,19 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Run initial health check on server start
+runAllDatabaseMonitors();
+
 // Periodic background health check (Every 60 seconds)
 const CHECK_INTERVAL_MS = 60000;
 setInterval(() => {
-  console.log(`⏰ [CRON JOB] Running scheduled health check...`);
-  runHealthCheck();
+  runAllDatabaseMonitors();
 }, CHECK_INTERVAL_MS);
 
 app.listen(PORT, () => {
   console.log(`
 🚀 ===================================================
-🌐 Uptime Monitor Backend Server is running on port ${PORT}
+🌐 Uptime Monitor Server with SQLite DB is running on port ${PORT}
 📡 API Endpoint: http://localhost:${PORT}/api/monitors
 ❤️ Health Status: http://localhost:${PORT}/health
 ===================================================

@@ -1,5 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
+import { db } from '../db/database.js';
 
 dotenv.config();
 
@@ -13,13 +14,22 @@ export interface AlertData {
   timestamp: string;
 }
 
-export async function sendTelegramAlert(data: AlertData): Promise<boolean> {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  const enabled = process.env.TELEGRAM_ALERT_ENABLED === 'true';
+export function getTelegramConfig() {
+  const tokenRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_token'").get() as { value: string } | undefined;
+  const chatIdRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get() as { value: string } | undefined;
+  const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_enabled'").get() as { value: string } | undefined;
+
+  const token = tokenRow?.value || process.env.TELEGRAM_BOT_TOKEN || '';
+  const chatId = chatIdRow?.value || process.env.TELEGRAM_CHAT_ID || '';
+  const enabled = enabledRow ? enabledRow.value === 'true' : (process.env.TELEGRAM_ALERT_ENABLED === 'true');
+
+  return { token, chatId, enabled };
+}
+
+export async function sendTelegramAlert(data: AlertData): Promise<{ success: boolean; message: string }> {
+  const { token, chatId, enabled } = getTelegramConfig();
 
   const emoji = data.status === 'DOWN' ? '🚨' : '⚠️';
-  const statusTitle = data.status === 'DOWN' ? 'CRITICAL INCIDENT: SITE DOWN' : 'PERFORMANCE WARNING: DEGRADED';
 
   const message = `
 ${emoji} *[UPTIME MONITOR ALERT]* ${emoji}
@@ -32,15 +42,13 @@ ${emoji} *[UPTIME MONITOR ALERT]* ${emoji}
 ❌ *Detail:* _${data.error || 'High Latency / Non-2xx Code'}_
 ⏰ *Time:* \`${data.timestamp}\`
 ------------------------------------
-🔧 _Antigravity Uptime Bot System_
+🔧 _Real-Time Uptime Monitoring System_
   `.trim();
 
-  // If Telegram credentials are missing or disabled, simulate alert in terminal
   if (!enabled || !token || !chatId) {
-    console.log(`\n[TELEGRAM SIMULATOR LOG] Alert would be sent to Telegram:`);
-    console.log(message);
-    console.log(`(Set TELEGRAM_BOT_TOKEN & TELEGRAM_CHAT_ID in backend/.env to send real alerts)\n`);
-    return false;
+    const infoMsg = `[TELEGRAM SIMULATION] Alert triggered for ${data.siteName} (${data.status}). Configure Telegram Token & Chat ID in Settings to receive real phone notifications.`;
+    console.log(infoMsg);
+    return { success: false, message: infoMsg };
   }
 
   try {
@@ -51,9 +59,35 @@ ${emoji} *[UPTIME MONITOR ALERT]* ${emoji}
       parse_mode: 'Markdown'
     });
     console.log(`✅ [TELEGRAM ALERT SENT] Successfully notified channel for ${data.siteName}`);
-    return true;
+    return { success: true, message: 'Alert sent to Telegram successfully' };
   } catch (err: any) {
-    console.error(`❌ [TELEGRAM ERROR] Failed to send alert:`, err.response?.data || err.message);
-    return false;
+    const errMsg = err.response?.data?.description || err.message || 'Failed to send Telegram message';
+    console.error(`❌ [TELEGRAM ERROR]`, errMsg);
+    return { success: false, message: errMsg };
+  }
+}
+
+export async function testTelegramConnection(token: string, chatId: string): Promise<{ success: boolean; message: string }> {
+  if (!token || !chatId) {
+    return { success: false, message: 'Both Telegram Bot Token and Chat ID are required' };
+  }
+
+  try {
+    const telegramUrl = `https://api.telegram.org/bot${token}/sendMessage`;
+    await axios.post(telegramUrl, {
+      chat_id: chatId,
+      text: `🚀 *[TEST MESSAGE]*\n\nYour Uptime Monitor Telegram Integration is configured and working perfectly!`,
+      parse_mode: 'Markdown'
+    });
+
+    // Persist working credentials to database
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_token', ?)").run(token);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_chat_id', ?)").run(chatId);
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_enabled', 'true')").run();
+
+    return { success: true, message: 'Test message sent! Telegram credentials saved.' };
+  } catch (err: any) {
+    const errMsg = err.response?.data?.description || err.message || 'Connection failed';
+    return { success: false, message: `Telegram test failed: ${errMsg}` };
   }
 }

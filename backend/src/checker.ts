@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { db } from './db/database.js';
 import { sendTelegramAlert } from './services/telegram.js';
 
 export interface PingResult {
@@ -18,7 +19,7 @@ export async function pingUrl(name: string, url: string, timeoutMs: number = 500
   try {
     const response = await axios.get(url, {
       timeout: timeoutMs,
-      validateStatus: () => true, // Don't throw error on non-2xx status code
+      validateStatus: () => true,
       headers: { 'User-Agent': 'UptimeMonitor-Bot/1.0' }
     });
 
@@ -47,47 +48,42 @@ export async function pingUrl(name: string, url: string, timeoutMs: number = 500
   }
 }
 
-// Target test URLs
-const TARGETS = [
-  { name: 'Google Search API', url: 'https://www.google.com' },
-  { name: 'GitHub Status API', url: 'https://api.github.com' },
-  { name: 'HTTPBin Mock 500 Error', url: 'https://httpbin.org/status/500' },
-  { name: 'HTTPBin Mock Slow Response', url: 'https://httpbin.org/delay/3' }
-];
-
-export async function runHealthCheck() {
+export async function runAllDatabaseMonitors() {
+  const monitors = db.prepare('SELECT * FROM monitors').all() as any[];
   console.log(`\n==================================================`);
-  console.log(`🚀 [LINUX DEV LOG] Running Health Checker at ${new Date().toLocaleString()}`);
+  console.log(`🚀 [HEALTH ENGINE] Checking ${monitors.length} database targets at ${new Date().toLocaleString()}`);
   console.log(`==================================================\n`);
 
-  for (const target of TARGETS) {
-    process.stdout.write(`🔍 Checking ${target.name} (${target.url})... `);
-    const result = await pingUrl(target.name, target.url);
-    
-    if (result.status === 'ONLINE') {
-      console.log(`✅ [${result.status}] Code: ${result.statusCode} | Latency: ${result.responseTimeMs}ms`);
-    } else {
-      const isDown = result.status === 'DOWN';
-      const badge = isDown ? '❌' : '⚠️';
-      console.log(`${badge} [${result.status}] Code: ${result.statusCode ?? 'N/A'} | Latency: ${result.responseTimeMs}ms | Error: ${result.error || 'High Latency'}`);
+  for (const monitor of monitors) {
+    const res = await pingUrl(monitor.name, monitor.url);
 
-      // Send alert notification
+    // Save check result to database
+    db.prepare(`
+      UPDATE monitors 
+      SET status = ?, status_code = ?, response_time_ms = ?, last_checked = datetime('now')
+      WHERE id = ?
+    `).run(res.status, res.statusCode, res.responseTimeMs, monitor.id);
+
+    db.prepare(`
+      INSERT INTO ping_logs (monitor_id, status, status_code, response_time_ms, error_message)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(monitor.id, res.status, res.statusCode, res.responseTimeMs, res.error || null);
+
+    // If status changed or down/degraded, send alert
+    if (res.status !== 'ONLINE') {
       await sendTelegramAlert({
-        siteName: target.name,
-        url: target.url,
-        status: result.status,
-        statusCode: result.statusCode,
-        responseTimeMs: result.responseTimeMs,
-        error: result.error,
-        timestamp: result.timestamp
+        siteName: monitor.name,
+        url: monitor.url,
+        status: res.status,
+        statusCode: res.statusCode,
+        responseTimeMs: res.responseTimeMs,
+        error: res.error,
+        timestamp: res.timestamp
       });
     }
-  }
-  
-  console.log(`\n--------------------------------------------------\n`);
-}
 
-// Execute directly if run via CLI
-if (process.argv[1] && process.argv[1].endsWith('checker.ts')) {
-  runHealthCheck();
+    console.log(`🔍 [${res.status}] ${monitor.name} (${res.responseTimeMs}ms) Code: ${res.statusCode ?? 'N/A'}`);
+  }
+
+  console.log(`\n--------------------------------------------------\n`);
 }
