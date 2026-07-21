@@ -28,14 +28,35 @@ Sổ tay hướng dẫn sử dụng các câu lệnh Linux căn bản đến nâ
 
 ---
 
-## 3. Kiểm Tra Mạng & HTTP (Networking & Curl)
+## 3. Kiểm Tra Mạng & Quản Lý Port (Networking & Port Management)
 
-| Lệnh | Ý nghĩa | Ví dụ thực tế |
-| --- | --- | --- |
-| `curl -I <url>` | Gửi yêu cầu HTTP HEAD kiểm tra Status Code | `curl -I https://www.google.com` |
-| `curl -X POST` | Gửi dữ liệu JSON tới API endpoint | `curl -X POST http://localhost:4000/api/monitors` |
-| `ping <host>` | Kiểm tra kết nối mạng (ICMP Echo) | `ping google.com` |
-| `netstat` / `ss` | Kiểm tra port nào đang mở trên Linux | `ss -tulpn | grep 4000` |
+### 🐧 Trên Linux / macOS / WSL:
+- **Kiểm tra port 3000 đang do ứng dụng nào dùng (PID)**:
+  ```bash
+  lsof -i :3000
+  # Hoặc
+  ss -tulpn | grep 3000
+  ```
+- **Ép ngắt (Kill) ứng dụng đang chiếm port 3000**:
+  ```bash
+  kill -9 $(lsof -t -i:3000)
+  # Hoặc
+  fuser -k 3000/tcp
+  ```
+
+### 🪟 Trên Windows (PowerShell):
+- **Kiểm tra port 3000 đang dùng**:
+  ```powershell
+  Get-NetTCPConnection -LocalPort 3000
+  # Hoặc
+  netstat -ano | findstr :3000
+  ```
+- **Ép ngắt (Kill) ứng dụng chiếm port 3000 theo PID (Ví dụ PID là 12345)**:
+  ```powershell
+  Stop-Process -Id 12345 -Force
+  # Hoặc câu lệnh 1 dòng tự động tìm và kill port 3000:
+  Get-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess | Stop-Process -Force
+  ```
 
 ---
 
@@ -58,5 +79,6 @@ Sổ tay hướng dẫn sử dụng các câu lệnh Linux căn bản đến nâ
 | `docker build -t <name> .` | Build Docker Image từ Dockerfile | `docker build -t uptime-backend ./backend` |
 | `docker run -d -p 4000:4000` | Chạy container dưới nền (detached mode) | `docker run -d -p 4000:4000 uptime-backend` |
 | `docker ps` | Xem danh sách các container đang chạy | `docker ps` |
-| `docker logs -f <id>` | xem log trực tiếp từ container Linux | `docker logs -f <container_id>` |
+| `docker logs -f <id>` | Xem log trực tiếp từ container Linux | `docker logs -f uptime-backend` |
 | `docker compose up -d` | Khởi động full-stack (Backend + Frontend + DB) | `docker compose up -d` |
+| `docker compose down` | Dừng và dọn dẹp sạch toàn bộ các container | `docker compose down` |
