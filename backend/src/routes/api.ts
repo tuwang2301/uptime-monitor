@@ -69,7 +69,7 @@ router.get('/monitors', async (req: Request, res: Response) => {
     });
 
     const result = await Promise.all(
-      monitors.map(async (m: any) => {
+      monitors.map(async (m) => {
         // Fetch last 20 ping logs for sparkline visualization
         const logs = await prisma.pingLog.findMany({
           where: { monitorId: m.id },
@@ -103,10 +103,11 @@ router.get('/monitors', async (req: Request, res: Response) => {
           name: m.name,
           url: m.url,
           intervalSec: m.intervalSec,
-          status: m.status,
+          status: m.isActive ? m.status : 'PAUSED',
           statusCode: m.statusCode,
           responseTimeMs: m.responseTimeMs,
           lastChecked: m.lastChecked?.toISOString() || null,
+          isActive: m.isActive,
           uptimePct,
           history: logs.reverse().map((l: any) => ({
             timestamp: l.createdAt.toLocaleTimeString(),
@@ -127,12 +128,12 @@ router.get('/monitors', async (req: Request, res: Response) => {
 router.get('/stats', async (req: Request, res: Response) => {
   try {
     const total = await prisma.monitor.count();
-    const online = await prisma.monitor.count({ where: { status: 'ONLINE' } });
-    const degraded = await prisma.monitor.count({ where: { status: 'DEGRADED' } });
-    const down = await prisma.monitor.count({ where: { status: 'DOWN' } });
+    const online = await prisma.monitor.count({ where: { status: 'ONLINE', isActive: true } });
+    const degraded = await prisma.monitor.count({ where: { status: 'DEGRADED', isActive: true } });
+    const down = await prisma.monitor.count({ where: { status: 'DOWN', isActive: true } });
 
     const avgLatencyRes = await prisma.monitor.aggregate({
-      where: { responseTimeMs: { gt: 0 } },
+      where: { responseTimeMs: { gt: 0 }, isActive: true },
       _avg: { responseTimeMs: true }
     });
     const avgLatency = avgLatencyRes._avg.responseTimeMs || 0;
@@ -180,7 +181,7 @@ router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
       data: {
         name,
         url,
-        intervalSec: intervalSec || 60,
+        intervalSec: intervalSec ? parseInt(String(intervalSec), 10) : 60,
         status: 'PENDING'
       }
     });
@@ -210,6 +211,33 @@ router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
     });
 
     res.status(201).json({ success: true, data: created });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// PATCH /api/monitors/:id - Update monitor properties (pause/resume or intervalSec)
+router.patch('/monitors/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const monitorId = parseInt(String(id), 10);
+    const { name, url, intervalSec, isActive } = req.body;
+
+    if (isNaN(monitorId)) {
+      return res.status(400).json({ success: false, error: 'Invalid ID format' });
+    }
+
+    const updated = await prisma.monitor.update({
+      where: { id: monitorId },
+      data: {
+        name,
+        url,
+        intervalSec: intervalSec !== undefined ? parseInt(String(intervalSec), 10) : undefined,
+        isActive: isActive !== undefined ? isActive === true : undefined
+      }
+    });
+
+    res.json({ success: true, data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, error: error.message });
   }

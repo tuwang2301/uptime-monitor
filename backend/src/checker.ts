@@ -51,11 +51,18 @@ export async function pingUrl(name: string, url: string, timeoutMs: number = 500
 export async function runAllDatabaseMonitors() {
   const monitors = await prisma.monitor.findMany();
   console.log(`\n==================================================`);
-  console.log(`🚀 [HEALTH ENGINE] Checking ${monitors.length} database targets at ${new Date().toLocaleString()}`);
+  console.log(`🚀 [HEALTH ENGINE] Checking active database targets at ${new Date().toLocaleString()}`);
   console.log(`==================================================\n`);
 
   for (const monitor of monitors) {
+    // Skip checking if monitor is paused
+    if (!monitor.isActive) {
+      console.log(`⏸️ [PAUSED] Skipping check for ${monitor.name} (${monitor.url})`);
+      continue;
+    }
+
     const res = await pingUrl(monitor.name, monitor.url);
+    const oldStatus = monitor.status;
 
     // Save check result via Prisma
     await prisma.monitor.update({
@@ -79,12 +86,16 @@ export async function runAllDatabaseMonitors() {
       }
     });
 
-    // If status changed or down/degraded, send alert
-    if (res.status !== 'ONLINE') {
+    // Spam prevention: send Telegram alert ONLY on status transition
+    const statusChanged = oldStatus !== 'PENDING' && oldStatus !== res.status;
+    const initialFailure = oldStatus === 'PENDING' && res.status !== 'ONLINE';
+
+    if (statusChanged || initialFailure) {
       await sendTelegramAlert({
         siteName: monitor.name,
         url: monitor.url,
         status: res.status,
+        oldStatus: oldStatus !== 'PENDING' ? oldStatus : undefined,
         statusCode: res.statusCode,
         responseTimeMs: res.responseTimeMs,
         error: res.error,

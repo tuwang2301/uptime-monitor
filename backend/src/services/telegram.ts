@@ -7,7 +7,8 @@ dotenv.config();
 export interface AlertData {
   siteName: string;
   url: string;
-  status: 'DEGRADED' | 'DOWN';
+  status: 'ONLINE' | 'DEGRADED' | 'DOWN';
+  oldStatus?: string;
   statusCode: number | null;
   responseTimeMs: number;
   error?: string;
@@ -29,17 +30,27 @@ export async function getTelegramConfig() {
 export async function sendTelegramAlert(data: AlertData): Promise<{ success: boolean; message: string }> {
   const { token, chatId, enabled } = await getTelegramConfig();
 
-  const emoji = data.status === 'DOWN' ? '🚨' : '⚠️';
+  let emoji = '🚨';
+  let title = 'CRITICAL INCIDENT: SITE DOWN';
+  
+  if (data.status === 'ONLINE') {
+    emoji = '✅';
+    title = 'RESOLVED: SERVICE IS ONLINE';
+  } else if (data.status === 'DEGRADED') {
+    emoji = '⚠️';
+    title = 'PERFORMANCE WARNING: DEGRADED';
+  }
 
   const message = `
 ${emoji} *[UPTIME MONITOR ALERT]* ${emoji}
+*${title}*
 ------------------------------------
 📌 *Service:* ${data.siteName}
 🌐 *URL:* \`${data.url}\`
-📊 *Status:* *${data.status}*
+📊 *Current Status:* *${data.status}* ${data.oldStatus ? `(was ${data.oldStatus})` : ''}
 🔢 *HTTP Code:* \`${data.statusCode ?? 'N/A'}\`
 ⏱️ *Latency:* \`${data.responseTimeMs}ms\`
-❌ *Detail:* _${data.error || 'High Latency / Non-2xx Code'}_
+❌ *Detail:* _${data.error || 'N/A'}_
 ⏰ *Time:* \`${data.timestamp}\`
 ------------------------------------
 🔧 _Real-Time Uptime Monitoring System_

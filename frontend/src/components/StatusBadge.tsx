@@ -1,8 +1,8 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle, XCircle, Clock } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, XCircle, Clock, Pause } from 'lucide-react';
 
 interface StatusBadgeProps {
-  status: 'ONLINE' | 'DEGRADED' | 'DOWN' | 'PENDING';
+  status: 'ONLINE' | 'DEGRADED' | 'DOWN' | 'PENDING' | 'PAUSED';
 }
 
 export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
@@ -26,6 +26,13 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status }) => {
         <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-500/10 text-rose-400 border border-rose-500/20 animate-pulse">
           <XCircle className="w-3.5 h-3.5" />
           DOWN
+        </span>
+      );
+    case 'PAUSED':
+      return (
+        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-500 border border-amber-500/20">
+          <Pause className="w-3.5 h-3.5" />
+          PAUSED
         </span>
       );
     default:

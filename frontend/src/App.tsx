@@ -19,12 +19,21 @@ import {
   Database,
   Lock,
   LogOut,
-  LogIn
+  LogIn,
+  Play,
+  Pause,
+  Edit2,
+  Info,
+  CheckCircle,
+  X,
+  Clock
 } from 'lucide-react';
 import { StatusBadge } from './components/StatusBadge';
 import { AddMonitorModal } from './components/AddMonitorModal';
 import { TelegramSettingsModal } from './components/TelegramSettingsModal';
 import { LoginModal } from './components/LoginModal';
+import { EditMonitorModal } from './components/EditMonitorModal';
+import { ConfirmModal } from './components/ConfirmModal';
 import { SparklineChart } from './components/SparklineChart';
 
 interface MonitorTarget {
@@ -32,11 +41,12 @@ interface MonitorTarget {
   name: string;
   url: string;
   intervalSec: number;
-  status: 'ONLINE' | 'DEGRADED' | 'DOWN' | 'PENDING';
+  status: 'ONLINE' | 'DEGRADED' | 'DOWN' | 'PENDING' | 'PAUSED';
   statusCode: number | null;
   responseTimeMs: number;
   lastChecked: string | null;
   uptimePct: number;
+  isActive: boolean;
   history: Array<{ timestamp: string; latency: number; status: string }>;
 }
 
@@ -47,6 +57,12 @@ interface SystemStats {
   downMonitors: number;
   avgLatencyMs: number;
   overallUptimePct: number;
+}
+
+interface ToastMessage {
+  id: string;
+  message: string;
+  type: 'success' | 'error' | 'info';
 }
 
 export function App() {
@@ -61,10 +77,36 @@ export function App() {
   });
   const [loading, setLoading] = useState(true);
   const [refreshingId, setRefreshingId] = useState<string | null>(null);
+  
+  // Modals state
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isTelegramModalOpen, setIsTelegramModalOpen] = useState(false);
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [editingMonitor, setEditingMonitor] = useState<MonitorTarget | null>(null);
+  
+  // Custom confirm dialog state
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+  const [confirmCallback, setConfirmCallback] = useState<() => void>(() => {});
+  const [confirmConfig, setConfirmConfig] = useState({ title: '', message: '', confirmText: '', type: 'danger' as 'danger' | 'warning' | 'info' });
+  
+  // Custom toast notification state
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [user, setUser] = useState<string | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    const id = Date.now().toString();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 4000);
+  };
+
+  const openConfirm = (title: string, message: string, onConfirm: () => void, type: 'danger' | 'warning' | 'info' = 'danger', confirmText = 'Confirm') => {
+    setConfirmConfig({ title, message, confirmText, type });
+    setConfirmCallback(() => onConfirm);
+    setIsConfirmOpen(true);
+  };
 
   // Configure Axios interceptor for JWT
   useEffect(() => {
@@ -108,6 +150,7 @@ export function App() {
     localStorage.setItem('token', token);
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     setUser(username);
+    showToast(`Signed in successfully as Administrator`, 'success');
     fetchData();
   };
 
@@ -115,16 +158,17 @@ export function App() {
     localStorage.removeItem('token');
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
+    showToast('Signed out of Administrator session', 'info');
   };
 
   const handleManualPing = async (id: string) => {
     setRefreshingId(id);
     try {
       await axios.post(`/api/monitors/${id}/ping`);
+      showToast('Manual health check completed successfully', 'success');
       await fetchData();
     } catch (err) {
-      console.error('Manual ping error:', err);
-      alert('Failed to perform manual ping. Please make sure you are logged in.');
+      showToast('Unauthorized or manual check failed', 'error');
     } finally {
       setRefreshingId(null);
     }
@@ -133,20 +177,58 @@ export function App() {
   const handleAddMonitor = async (name: string, url: string, intervalSec: number) => {
     try {
       await axios.post('/api/monitors', { name, url, intervalSec });
+      showToast(`Added new monitor: ${name}`, 'success');
       await fetchData();
     } catch (err) {
-      alert('Unauthorized or failed to add monitor.');
+      showToast('Unauthorized or failed to add monitor', 'error');
     }
   };
 
-  const handleDeleteMonitor = async (id: string) => {
-    if (!confirm('Are you sure you want to remove this endpoint from active monitoring?')) return;
+  const handleUpdateMonitor = async (id: string, name: string, url: string, intervalSec: number) => {
     try {
-      await axios.delete(`/api/monitors/${id}`);
+      await axios.patch(`/api/monitors/${id}`, { name, url, intervalSec });
+      showToast(`Configuration updated for ${name}`, 'success');
       await fetchData();
     } catch (err) {
-      alert('Unauthorized or failed to delete monitor.');
+      showToast('Failed to update monitor settings', 'error');
     }
+  };
+
+  const handleToggleActive = async (id: string, name: string, currentActive: boolean) => {
+    const actionText = currentActive ? 'Pause' : 'Resume';
+    openConfirm(
+      `${actionText} Monitor?`,
+      `Are you sure you want to ${actionText.toLowerCase()} monitoring for ${name}? Notifications for this target will be suspended.`,
+      async () => {
+        try {
+          await axios.patch(`/api/monitors/${id}`, { isActive: !currentActive });
+          showToast(`Monitoring ${currentActive ? 'paused' : 'resumed'} for ${name}`, 'success');
+          await fetchData();
+        } catch (err) {
+          showToast('Failed to toggle monitor status', 'error');
+        }
+      },
+      'warning',
+      actionText
+    );
+  };
+
+  const handleDeleteMonitor = (id: string, name: string) => {
+    openConfirm(
+      'Remove Monitor?',
+      `Are you sure you want to permanently delete ${name}? This will erase all logs and SLA metric history from the PostgreSQL database.`,
+      async () => {
+        try {
+          await axios.delete(`/api/monitors/${id}`);
+          showToast(`Deleted monitor: ${name}`, 'success');
+          await fetchData();
+        } catch (err) {
+          showToast('Failed to delete monitor target', 'error');
+        }
+      },
+      'danger',
+      'Delete'
+    );
   };
 
   return (
@@ -154,7 +236,7 @@ export function App() {
       {/* Top Notification Bar */}
       <div className="bg-gradient-to-r from-indigo-900/60 via-purple-900/40 to-slate-900 border-b border-indigo-500/20 py-2 px-4 text-center text-xs font-medium text-indigo-200 flex items-center justify-center gap-2">
         <Radio className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-        <span>Live Telemetry Engine connected to SQLite DB & JWT Security Layer</span>
+        <span>Enterprise Incident Intelligence Hub connected to Freelancer.com API standard</span>
       </div>
 
       {/* Main Header */}
@@ -168,8 +250,8 @@ export function App() {
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-extrabold text-lg text-white tracking-tight">UptimePulse</span>
-                <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                  SQLite
+                <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">
+                  Production PostgreSQL
                 </span>
               </div>
               <p className="text-[11px] text-gray-400 font-medium">Enterprise Health Monitoring & Incident Intelligence</p>
@@ -243,12 +325,12 @@ export function App() {
 
           <div className="bg-[#0f1524] p-5 rounded-2xl border border-gray-800/80 shadow-xl relative overflow-hidden group">
             <div className="flex items-center justify-between text-gray-400 mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Monitored Endpoints</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Active Services</span>
               <Server className="w-4 h-4 text-indigo-400" />
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-black text-white tracking-tight">{stats.totalMonitors}</span>
-              <span className="text-xs text-indigo-400 font-semibold">{stats.onlineMonitors} Operational</span>
+              <span className="text-xs text-indigo-400 font-semibold">{stats.onlineMonitors} Monitoring</span>
             </div>
           </div>
 
@@ -299,21 +381,28 @@ export function App() {
               {monitors.map((m) => (
                 <div 
                   key={m.id} 
-                  className="bg-[#0f1524] rounded-2xl p-5 border border-gray-800/90 hover:border-indigo-500/40 transition-all duration-200 shadow-lg"
+                  className={`bg-[#0f1524] rounded-2xl p-5 border transition-all duration-200 shadow-lg ${
+                    !m.isActive 
+                      ? 'border-gray-800/40 opacity-60' 
+                      : 'border-gray-800/90 hover:border-indigo-500/40'
+                  }`}
                 >
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     
                     {/* Left: Info */}
                     <div className="flex items-start gap-3.5">
                       <div className="p-3 bg-gray-900/90 rounded-xl border border-gray-800/80 shrink-0 mt-0.5">
-                        <GlobeStatusIcon status={m.status} />
+                        <GlobeStatusIcon status={m.isActive ? m.status : 'PAUSED'} />
                       </div>
                       <div>
                         <div className="flex items-center gap-2.5 flex-wrap">
                           <h3 className="text-base font-bold text-white tracking-tight">{m.name}</h3>
-                          <StatusBadge status={m.status} />
+                          <StatusBadge status={m.isActive ? m.status : 'PAUSED'} />
                           <span className="text-[11px] font-mono font-semibold text-gray-300 bg-gray-900 px-2 py-0.5 rounded border border-gray-800">
-                            HTTP {m.statusCode ?? 'ERR'}
+                            HTTP {m.statusCode ?? 'N/A'}
+                          </span>
+                          <span className="text-[11px] font-mono text-gray-400 bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800/40 flex items-center gap-1">
+                            <Clock className="w-3 h-3" /> {m.intervalSec}s
                           </span>
                         </div>
                         <div className="flex items-center gap-3 mt-1.5 flex-wrap">
@@ -335,7 +424,7 @@ export function App() {
                     <div className="flex items-center gap-6 self-start md:self-center">
                       <div className="text-right">
                         <div className="text-[11px] text-gray-400 font-medium">Latency</div>
-                        <div className="text-sm font-bold text-white font-mono">{m.responseTimeMs} ms</div>
+                        <div className="text-sm font-bold text-white font-mono">{m.isActive ? `${m.responseTimeMs} ms` : 'N/A'}</div>
                       </div>
 
                       <div className="text-right">
@@ -345,7 +434,7 @@ export function App() {
                       
                       {/* Telemetry Sparkline Chart */}
                       <div className="hidden lg:block bg-gray-900/80 p-2 rounded-xl border border-gray-800">
-                        <SparklineChart data={m.history} />
+                        <SparklineChart data={m.isActive ? m.history : []} />
                       </div>
                     </div>
 
@@ -354,9 +443,32 @@ export function App() {
                       {user ? (
                         <>
                           <button
+                            onClick={() => handleToggleActive(m.id, m.name, m.isActive)}
+                            className={`p-2 rounded-xl transition border ${
+                              m.isActive 
+                                ? 'text-amber-400 hover:bg-amber-500/10 border-transparent' 
+                                : 'text-emerald-400 hover:bg-emerald-500/10 border-transparent'
+                            }`}
+                            title={m.isActive ? 'Pause Monitoring' : 'Resume Monitoring'}
+                          >
+                            {m.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              setEditingMonitor(m);
+                              setIsEditModalOpen(true);
+                            }}
+                            className="p-2 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-xl transition border border-transparent"
+                            title="Edit Configuration"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+
+                          <button
                             onClick={() => handleManualPing(m.id)}
-                            disabled={refreshingId === m.id}
-                            className="px-3 py-1.5 text-xs font-bold text-gray-200 hover:text-white bg-gray-900 hover:bg-gray-800 rounded-xl transition flex items-center gap-1.5 border border-gray-800 disabled:opacity-50"
+                            disabled={refreshingId === m.id || !m.isActive}
+                            className="px-3 py-1.5 text-xs font-bold text-gray-200 hover:text-white bg-gray-900 hover:bg-gray-800 rounded-xl transition flex items-center gap-1.5 border border-gray-800 disabled:opacity-30"
                             title="Instant Health Check"
                           >
                             <RefreshCw className={`w-3.5 h-3.5 ${refreshingId === m.id ? 'animate-spin text-indigo-400' : ''}`} />
@@ -364,8 +476,8 @@ export function App() {
                           </button>
 
                           <button
-                            onClick={() => handleDeleteMonitor(m.id)}
-                            className="p-2 text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition border border-transparent hover:border-rose-500/20"
+                            onClick={() => handleDeleteMonitor(m.id, m.name)}
+                            className="p-2 text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition border border-transparent"
                             title="Remove Monitor"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -386,19 +498,54 @@ export function App() {
         </div>
       </main>
 
+      {/* Toast Notification Container */}
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+        {toasts.map((t) => (
+          <div
+            key={t.id}
+            className={`p-4 rounded-xl shadow-2xl border flex items-start gap-3 pointer-events-auto transition-all duration-300 animate-slide-in ${
+              t.type === 'success'
+                ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/30'
+                : t.type === 'error'
+                  ? 'bg-rose-950/90 text-rose-300 border-rose-500/30'
+                  : 'bg-indigo-950/90 text-indigo-300 border-indigo-500/30'
+            }`}
+          >
+            <div className="mt-0.5 shrink-0">
+              {t.type === 'success' ? (
+                <CheckCircle className="w-4 h-4 text-emerald-400" />
+              ) : t.type === 'error' ? (
+                <XCircle className="w-4 h-4 text-rose-400" />
+              ) : (
+                <Info className="w-4 h-4 text-indigo-400" />
+              )}
+            </div>
+            <div className="flex-1 text-xs font-semibold leading-relaxed">
+              {t.message}
+            </div>
+            <button
+              onClick={() => setToasts(prev => prev.filter(item => item.id !== t.id))}
+              className="text-gray-400 hover:text-white shrink-0 p-0.5 rounded"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+
       {/* Footer */}
       <footer className="border-t border-gray-800/80 py-6 text-center text-xs text-gray-400 bg-[#0c101c]/80">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-indigo-400" />
-            <span>Production-Grade Uptime & Incident Intelligence System</span>
+            <span>Production Uptime Intelligence Hub | Applied for Freelancer.com Engineering</span>
           </div>
           <div className="flex items-center gap-4 text-gray-400 font-mono text-[11px]">
-            <span>SQLite Database</span>
+            <span>PostgreSQL</span>
             <span>•</span>
-            <span>Telegram Bot API</span>
+            <span>Telegram Bot</span>
             <span>•</span>
-            <span>JWT Auth Security</span>
+            <span>JWT Security</span>
           </div>
         </div>
       </footer>
@@ -419,6 +566,26 @@ export function App() {
         onClose={() => setIsLoginModalOpen(false)}
         onLoginSuccess={handleLoginSuccess}
       />
+
+      <EditMonitorModal
+        isOpen={isEditModalOpen}
+        onClose={() => {
+          setIsEditModalOpen(false);
+          setEditingMonitor(null);
+        }}
+        monitor={editingMonitor}
+        onUpdate={handleUpdateMonitor}
+      />
+
+      <ConfirmModal
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        onConfirm={confirmCallback}
+        title={confirmConfig.title}
+        message={confirmConfig.message}
+        confirmText={confirmConfig.confirmText}
+        type={confirmConfig.type}
+      />
     </div>
   );
 }
@@ -428,6 +595,7 @@ function GlobeStatusIcon({ status }: { status: string }) {
     case 'ONLINE': return <CheckCircle2 className="w-5 h-5 text-emerald-400" />;
     case 'DEGRADED': return <AlertTriangle className="w-5 h-5 text-amber-400" />;
     case 'DOWN': return <XCircle className="w-5 h-5 text-rose-400" />;
+    case 'PAUSED': return <Pause className="w-5 h-5 text-amber-500 animate-pulse" />;
     default: return <Activity className="w-5 h-5 text-indigo-400" />;
   }
 }
