@@ -35,6 +35,7 @@ import { LoginModal } from './components/LoginModal';
 import { EditMonitorModal } from './components/EditMonitorModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SparklineChart } from './components/SparklineChart';
+axios.defaults.baseURL = (import.meta as any).env.VITE_API_BASE_URL || '';
 
 interface MonitorTarget {
   id: string;
