@@ -1,56 +1,52 @@
-import Database from 'better-sqlite3';
+import { PrismaClient } from '@prisma/client';
+import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import bcrypt from 'bcryptjs';
 
 const dbDir = path.resolve(process.cwd(), 'data');
 if (!fs.existsSync(dbDir)) {
   fs.mkdirSync(dbDir, { recursive: true });
 }
 
-const dbPath = path.join(dbDir, 'uptime.db');
-export const db = new Database(dbPath);
+// Instantiate adapter directly with url option as required by Prisma 7
+const adapter = new PrismaBetterSqlite3({
+  url: 'file:./data/uptime.db'
+});
 
-// Enable WAL mode for high concurrency
-db.pragma('journal_mode = WAL');
+export const prisma = new PrismaClient({ adapter });
 
-// Initialize Database Schema
-export function initDatabase() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS monitors (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      url TEXT NOT NULL,
-      interval_sec INTEGER DEFAULT 60,
-      status TEXT DEFAULT 'PENDING',
-      status_code INTEGER,
-      response_time_ms INTEGER DEFAULT 0,
-      last_checked TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    );
+// Database seed helper for initial monitors and default admin user
+export async function initDatabase() {
+  try {
+    await prisma.$connect();
+    
+    // Seed default monitors
+    const count = await prisma.monitor.count();
+    if (count === 0) {
+      await prisma.monitor.createMany({
+        data: [
+          { name: 'Google Search', url: 'https://www.google.com', intervalSec: 60 },
+          { name: 'GitHub REST API', url: 'https://api.github.com', intervalSec: 60 },
+          { name: 'HTTPBin Status 500 Mock', url: 'https://httpbin.org/status/500', intervalSec: 30 }
+        ]
+      });
+      console.log('🌱 [DATABASE] Default monitors seeded successfully.');
+    }
 
-    CREATE TABLE IF NOT EXISTS ping_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      monitor_id INTEGER NOT NULL,
-      status TEXT NOT NULL,
-      status_code INTEGER,
-      response_time_ms INTEGER NOT NULL,
-      error_message TEXT,
-      created_at TEXT DEFAULT (datetime('now')),
-      FOREIGN KEY (monitor_id) REFERENCES monitors(id) ON DELETE CASCADE
-    );
-
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value TEXT
-    );
-  `);
-
-  // Seed default monitors if empty
-  const count = db.prepare('SELECT COUNT(*) as count FROM monitors').get() as { count: number };
-  if (count.count === 0) {
-    const insert = db.prepare('INSERT INTO monitors (name, url, interval_sec) VALUES (?, ?, ?)');
-    insert.run('Google Search', 'https://www.google.com', 60);
-    insert.run('GitHub REST API', 'https://api.github.com', 60);
-    insert.run('HTTPBin Status 500 Mock', 'https://httpbin.org/status/500', 30);
+    // Seed default admin user (username: admin, password: admin)
+    const userCount = await prisma.user.count();
+    if (userCount === 0) {
+      const hashedPassword = await bcrypt.hash('admin', 10);
+      await prisma.user.create({
+        data: {
+          username: 'admin',
+          password: hashedPassword
+        }
+      });
+      console.log('🌱 [DATABASE] Default admin user (admin/admin) seeded successfully.');
+    }
+  } catch (error) {
+    console.error('❌ [DATABASE] Failed to initialize database client:', error);
   }
 }

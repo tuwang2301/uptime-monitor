@@ -1,156 +1,307 @@
 import { Router, Request, Response } from 'express';
-import { db } from '../db/database.js';
-import { pingUrl, runAllDatabaseMonitors } from '../checker.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import { prisma } from '../db/database.js';
+import { pingUrl } from '../checker.js';
 import { sendTelegramAlert, getTelegramConfig, testTelegramConnection } from '../services/telegram.js';
+import { requireAuth, AuthenticatedRequest } from '../middlewares/auth.js';
 
 const router = Router();
+const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_key_change_me_in_prod';
 
-// GET /api/monitors - Get all monitored services with history & real SLA %
-router.get('/monitors', (req: Request, res: Response) => {
-  const monitors = db.prepare('SELECT * FROM monitors ORDER BY id DESC').all() as any[];
+// ==========================================
+// AUTHENTICATION ENDPOINTS
+// ==========================================
 
-  const result = monitors.map((m) => {
-    // Get last 20 ping logs for history sparkline
-    const logs = db.prepare(`
-      SELECT status, response_time_ms as latency, created_at as timestamp 
-      FROM ping_logs 
-      WHERE monitor_id = ? 
-      ORDER BY id DESC LIMIT 20
-    `).all(m.id) as any[];
+// POST /api/auth/login
+router.post('/auth/login', async (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
 
-    // Calculate Uptime % based on logs
-    const totalPings = db.prepare('SELECT COUNT(*) as count FROM ping_logs WHERE monitor_id = ?').get(m.id) as { count: number };
-    const onlinePings = db.prepare("SELECT COUNT(*) as count FROM ping_logs WHERE monitor_id = ? AND status != 'DOWN'").get(m.id) as { count: number };
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Username and password are required' });
+    }
 
-    const uptimePct = totalPings.count > 0 
-      ? Number(((onlinePings.count / totalPings.count) * 100).toFixed(2)) 
-      : 100;
+    const user = await prisma.user.findUnique({
+      where: { username }
+    });
 
-    return {
-      id: m.id,
-      name: m.name,
-      url: m.url,
-      intervalSec: m.interval_sec,
-      status: m.status,
-      statusCode: m.status_code,
-      responseTimeMs: m.response_time_ms,
-      lastChecked: m.last_checked,
-      uptimePct,
-      history: logs.reverse()
-    };
-  });
+    if (!user) {
+      return res.status(401).json({ success: false, error: 'Invalid username or password' });
+    }
 
-  res.json({ success: true, data: result });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(401).json({ success: false, error: 'Invalid username or password' });
+    }
+
+    const token = jwt.sign(
+      { id: user.id, username: user.username },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.json({
+      success: true,
+      token,
+      user: { id: user.id, username: user.username }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
-// POST /api/monitors - Add new monitor
-router.post('/monitors', async (req: Request, res: Response) => {
-  const { name, url, intervalSec } = req.body;
+// GET /api/auth/me - Check current token session
+router.get('/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  res.json({ success: true, user: req.user });
+});
 
-  if (!name || !url) {
-    return res.status(400).json({ success: false, error: 'Name and URL are required' });
+
+// ==========================================
+// PUBLIC MONITOR ENDPOINTS (Anyone can view status)
+// ==========================================
+
+// GET /api/monitors - Get all monitored services with history & calculated SLA %
+router.get('/monitors', async (req: Request, res: Response) => {
+  try {
+    const monitors = await prisma.monitor.findMany({
+      orderBy: { id: 'desc' }
+    });
+
+    const result = await Promise.all(
+      monitors.map(async (m) => {
+        // Fetch last 20 ping logs for sparkline visualization
+        const logs = await prisma.pingLog.findMany({
+          where: { monitorId: m.id },
+          take: 20,
+          orderBy: { id: 'desc' },
+          select: {
+            status: true,
+            responseTimeMs: true,
+            createdAt: true
+          }
+        });
+
+        // Calculate SLA %
+        const totalPings = await prisma.pingLog.count({
+          where: { monitorId: m.id }
+        });
+        
+        const onlinePings = await prisma.pingLog.count({
+          where: {
+            monitorId: m.id,
+            status: { not: 'DOWN' }
+          }
+        });
+
+        const uptimePct = totalPings > 0
+          ? Number(((onlinePings / totalPings) * 100).toFixed(2))
+          : 100;
+
+        return {
+          id: m.id.toString(),
+          name: m.name,
+          url: m.url,
+          intervalSec: m.intervalSec,
+          status: m.status,
+          statusCode: m.statusCode,
+          responseTimeMs: m.responseTimeMs,
+          lastChecked: m.lastChecked?.toISOString() || null,
+          uptimePct,
+          history: logs.reverse().map(l => ({
+            timestamp: l.createdAt.toLocaleTimeString(),
+            latency: l.responseTimeMs,
+            status: l.status
+          }))
+        };
+      })
+    );
+
+    res.json({ success: true, data: result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
+});
 
-  const stmt = db.prepare('INSERT INTO monitors (name, url, interval_sec) VALUES (?, ?, ?)');
-  const info = stmt.run(name, url, intervalSec || 60);
-  const monitorId = info.lastInsertRowid;
+// GET /api/stats - Global Dashboard Stats calculated from Prisma
+router.get('/stats', async (req: Request, res: Response) => {
+  try {
+    const total = await prisma.monitor.count();
+    const online = await prisma.monitor.count({ where: { status: 'ONLINE' } });
+    const degraded = await prisma.monitor.count({ where: { status: 'DEGRADED' } });
+    const down = await prisma.monitor.count({ where: { status: 'DOWN' } });
 
-  // Immediate ping check
-  const checkRes = await pingUrl(name, url);
-  db.prepare(`
-    UPDATE monitors SET status = ?, status_code = ?, response_time_ms = ?, last_checked = datetime('now') WHERE id = ?
-  `).run(checkRes.status, checkRes.statusCode, checkRes.responseTimeMs, monitorId);
+    const avgLatencyRes = await prisma.monitor.aggregate({
+      where: { responseTimeMs: { gt: 0 } },
+      _avg: { responseTimeMs: true }
+    });
+    const avgLatency = avgLatencyRes._avg.responseTimeMs || 0;
 
-  db.prepare(`
-    INSERT INTO ping_logs (monitor_id, status, status_code, response_time_ms, error_message)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(monitorId, checkRes.status, checkRes.statusCode, checkRes.responseTimeMs, checkRes.error || null);
+    const totalLogs = await prisma.pingLog.count();
+    const onlineLogs = await prisma.pingLog.count({
+      where: { status: { not: 'DOWN' } }
+    });
+    
+    const overallUptimePct = totalLogs > 0
+      ? Number(((onlineLogs / totalLogs) * 100).toFixed(2))
+      : 100;
 
-  const created = db.prepare('SELECT * FROM monitors WHERE id = ?').get(monitorId);
-  res.status(201).json({ success: true, data: created });
+    res.json({
+      success: true,
+      stats: {
+        totalMonitors: total,
+        onlineMonitors: online,
+        degradedMonitors: degraded,
+        downMonitors: down,
+        avgLatencyMs: Math.round(avgLatency),
+        overallUptimePct
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+
+// ==========================================
+// SECURED ADMIN ENDPOINTS (Require Authentication)
+// ==========================================
+
+// POST /api/monitors - Add new monitor
+router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { name, url, intervalSec } = req.body;
+
+    if (!name || !url) {
+      return res.status(400).json({ success: false, error: 'Name and URL are required' });
+    }
+
+    const created = await prisma.monitor.create({
+      data: {
+        name,
+        url,
+        intervalSec: intervalSec || 60,
+        status: 'PENDING'
+      }
+    });
+
+    // Run initial ping check immediately
+    const checkRes = await pingUrl(name, url);
+    
+    await prisma.monitor.update({
+      where: { id: created.id },
+      data: {
+        status: checkRes.status,
+        statusCode: checkRes.statusCode,
+        responseTimeMs: checkRes.responseTimeMs,
+        lastChecked: new Date(checkRes.timestamp)
+      }
+    });
+
+    await prisma.pingLog.create({
+      data: {
+        monitorId: created.id,
+        status: checkRes.status,
+        statusCode: checkRes.statusCode,
+        responseTimeMs: checkRes.responseTimeMs,
+        errorMessage: checkRes.error || null,
+        createdAt: new Date(checkRes.timestamp)
+      }
+    });
+
+    res.status(201).json({ success: true, data: created });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // DELETE /api/monitors/:id - Remove monitor
-router.delete('/monitors/:id', (req: Request, res: Response) => {
-  const { id } = req.params;
-  db.prepare('DELETE FROM ping_logs WHERE monitor_id = ?').run(id);
-  const info = db.prepare('DELETE FROM monitors WHERE id = ?').run(id);
+router.delete('/monitors/:id', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const monitorId = parseInt(String(id), 10);
 
-  if (info.changes === 0) {
-    return res.status(404).json({ success: false, error: 'Monitor not found' });
+    if (isNaN(monitorId)) {
+      return res.status(400).json({ success: false, error: 'Invalid ID format' });
+    }
+
+    await prisma.monitor.delete({
+      where: { id: monitorId }
+    });
+
+    res.json({ success: true, message: 'Monitor deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
   }
-
-  res.json({ success: true, message: 'Monitor deleted successfully' });
 });
 
 // POST /api/monitors/:id/ping - Manual trigger ping
-router.post('/monitors/:id/ping', async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const monitor = db.prepare('SELECT * FROM monitors WHERE id = ?').get(id) as any;
+router.post('/monitors/:id/ping', requireAuth, async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const monitorId = parseInt(String(id), 10);
 
-  if (!monitor) {
-    return res.status(404).json({ success: false, error: 'Monitor not found' });
-  }
-
-  const checkRes = await pingUrl(monitor.name, monitor.url);
-
-  db.prepare(`
-    UPDATE monitors SET status = ?, status_code = ?, response_time_ms = ?, last_checked = datetime('now') WHERE id = ?
-  `).run(checkRes.status, checkRes.statusCode, checkRes.responseTimeMs, id);
-
-  db.prepare(`
-    INSERT INTO ping_logs (monitor_id, status, status_code, response_time_ms, error_message)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(id, checkRes.status, checkRes.statusCode, checkRes.responseTimeMs, checkRes.error || null);
-
-  if (checkRes.status !== 'ONLINE') {
-    await sendTelegramAlert({
-      siteName: monitor.name,
-      url: monitor.url,
-      status: checkRes.status,
-      statusCode: checkRes.statusCode,
-      responseTimeMs: checkRes.responseTimeMs,
-      error: checkRes.error,
-      timestamp: checkRes.timestamp
-    });
-  }
-
-  res.json({ success: true, message: 'Ping completed', data: checkRes });
-});
-
-// GET /api/stats - Global Dashboard Stats calculated from DB
-router.get('/stats', (req: Request, res: Response) => {
-  const total = (db.prepare('SELECT COUNT(*) as count FROM monitors').get() as any).count;
-  const online = (db.prepare("SELECT COUNT(*) as count FROM monitors WHERE status = 'ONLINE'").get() as any).count;
-  const degraded = (db.prepare("SELECT COUNT(*) as count FROM monitors WHERE status = 'DEGRADED'").get() as any).count;
-  const down = (db.prepare("SELECT COUNT(*) as count FROM monitors WHERE status = 'DOWN'").get() as any).count;
-  const avgLatency = (db.prepare('SELECT AVG(response_time_ms) as avg FROM monitors WHERE response_time_ms > 0').get() as any).avg || 0;
-
-  const totalLogs = (db.prepare('SELECT COUNT(*) as count FROM ping_logs').get() as any).count;
-  const onlineLogs = (db.prepare("SELECT COUNT(*) as count FROM ping_logs WHERE status != 'DOWN'").get() as any).count;
-  const overallUptimePct = totalLogs > 0 ? Number(((onlineLogs / totalLogs) * 100).toFixed(2)) : 100;
-
-  res.json({
-    success: true,
-    stats: {
-      totalMonitors: total,
-      onlineMonitors: online,
-      degradedMonitors: degraded,
-      downMonitors: down,
-      avgLatencyMs: Math.round(avgLatency),
-      overallUptimePct
+    if (isNaN(monitorId)) {
+      return res.status(400).json({ success: false, error: 'Invalid ID format' });
     }
-  });
+
+    const monitor = await prisma.monitor.findUnique({
+      where: { id: monitorId }
+    });
+
+    if (!monitor) {
+      return res.status(404).json({ success: false, error: 'Monitor not found' });
+    }
+
+    const checkRes = await pingUrl(monitor.name, monitor.url);
+
+    await prisma.monitor.update({
+      where: { id: monitorId },
+      data: {
+        status: checkRes.status,
+        statusCode: checkRes.statusCode,
+        responseTimeMs: checkRes.responseTimeMs,
+        lastChecked: new Date(checkRes.timestamp)
+      }
+    });
+
+    await prisma.pingLog.create({
+      data: {
+        monitorId: monitorId,
+        status: checkRes.status,
+        statusCode: checkRes.statusCode,
+        responseTimeMs: checkRes.responseTimeMs,
+        errorMessage: checkRes.error || null,
+        createdAt: new Date(checkRes.timestamp)
+      }
+    });
+
+    if (checkRes.status !== 'ONLINE') {
+      await sendTelegramAlert({
+        siteName: monitor.name,
+        url: monitor.url,
+        status: checkRes.status,
+        statusCode: checkRes.statusCode,
+        responseTimeMs: checkRes.responseTimeMs,
+        error: checkRes.error,
+        timestamp: checkRes.timestamp
+      });
+    }
+
+    res.json({ success: true, message: 'Ping completed', data: checkRes });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
 });
 
 // GET /api/settings/telegram - Get Telegram Config
-router.get('/settings/telegram', (req: Request, res: Response) => {
-  const config = getTelegramConfig();
+router.get('/settings/telegram', requireAuth, async (req: Request, res: Response) => {
+  const config = await getTelegramConfig();
   res.json({ success: true, data: config });
 });
 
 // POST /api/settings/telegram/test - Test & Save Telegram Credentials
-router.post('/settings/telegram/test', async (req: Request, res: Response) => {
+router.post('/settings/telegram/test', requireAuth, async (req: Request, res: Response) => {
   const { token, chatId } = req.body;
   const result = await testTelegramConnection(token, chatId);
   res.json(result);

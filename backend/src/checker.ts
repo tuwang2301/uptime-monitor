@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { db } from './db/database.js';
+import { prisma } from './db/database.js';
 import { sendTelegramAlert } from './services/telegram.js';
 
 export interface PingResult {
@@ -49,7 +49,7 @@ export async function pingUrl(name: string, url: string, timeoutMs: number = 500
 }
 
 export async function runAllDatabaseMonitors() {
-  const monitors = db.prepare('SELECT * FROM monitors').all() as any[];
+  const monitors = await prisma.monitor.findMany();
   console.log(`\n==================================================`);
   console.log(`🚀 [HEALTH ENGINE] Checking ${monitors.length} database targets at ${new Date().toLocaleString()}`);
   console.log(`==================================================\n`);
@@ -57,17 +57,27 @@ export async function runAllDatabaseMonitors() {
   for (const monitor of monitors) {
     const res = await pingUrl(monitor.name, monitor.url);
 
-    // Save check result to database
-    db.prepare(`
-      UPDATE monitors 
-      SET status = ?, status_code = ?, response_time_ms = ?, last_checked = datetime('now')
-      WHERE id = ?
-    `).run(res.status, res.statusCode, res.responseTimeMs, monitor.id);
+    // Save check result via Prisma
+    await prisma.monitor.update({
+      where: { id: monitor.id },
+      data: {
+        status: res.status,
+        statusCode: res.statusCode,
+        responseTimeMs: res.responseTimeMs,
+        lastChecked: new Date(res.timestamp)
+      }
+    });
 
-    db.prepare(`
-      INSERT INTO ping_logs (monitor_id, status, status_code, response_time_ms, error_message)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(monitor.id, res.status, res.statusCode, res.responseTimeMs, res.error || null);
+    await prisma.pingLog.create({
+      data: {
+        monitorId: monitor.id,
+        status: res.status,
+        statusCode: res.statusCode,
+        responseTimeMs: res.responseTimeMs,
+        errorMessage: res.error || null,
+        createdAt: new Date(res.timestamp)
+      }
+    });
 
     // If status changed or down/degraded, send alert
     if (res.status !== 'ONLINE') {

@@ -1,0 +1,51 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Monitor {
+  id             Int       @id @default(autoincrement())
+  name           String
+  url            String
+  intervalSec    Int       @default(60) @map("interval_sec")
+  status         String    @default("PENDING")
+  statusCode     Int?      @map("status_code")
+  responseTimeMs Int       @default(0) @map("response_time_ms")
+  lastChecked    DateTime? @map("last_checked")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  logs           PingLog[]
+
+  @@map("monitors")
+}
+
+model PingLog {
+  id             Int      @id @default(autoincrement())
+  monitorId      Int      @map("monitor_id")
+  monitor        Monitor  @relation(fields: [monitorId], references: [id], onDelete: Cascade)
+  status         String
+  statusCode     Int?     @map("status_code")
+  responseTimeMs Int      @map("response_time_ms")
+  errorMessage   String?  @map("error_message")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("ping_logs")
+}
+
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  password  String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("users")
+}

@@ -1,6 +1,6 @@
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { db } from '../db/database.js';
+import { prisma } from '../db/database.js';
 
 dotenv.config();
 
@@ -14,10 +14,10 @@ export interface AlertData {
   timestamp: string;
 }
 
-export function getTelegramConfig() {
-  const tokenRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_token'").get() as { value: string } | undefined;
-  const chatIdRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_chat_id'").get() as { value: string } | undefined;
-  const enabledRow = db.prepare("SELECT value FROM settings WHERE key = 'telegram_enabled'").get() as { value: string } | undefined;
+export async function getTelegramConfig() {
+  const tokenRow = await prisma.setting.findUnique({ where: { key: 'telegram_token' } });
+  const chatIdRow = await prisma.setting.findUnique({ where: { key: 'telegram_chat_id' } });
+  const enabledRow = await prisma.setting.findUnique({ where: { key: 'telegram_enabled' } });
 
   const token = tokenRow?.value || process.env.TELEGRAM_BOT_TOKEN || '';
   const chatId = chatIdRow?.value || process.env.TELEGRAM_CHAT_ID || '';
@@ -27,7 +27,7 @@ export function getTelegramConfig() {
 }
 
 export async function sendTelegramAlert(data: AlertData): Promise<{ success: boolean; message: string }> {
-  const { token, chatId, enabled } = getTelegramConfig();
+  const { token, chatId, enabled } = await getTelegramConfig();
 
   const emoji = data.status === 'DOWN' ? '🚨' : '⚠️';
 
@@ -80,10 +80,24 @@ export async function testTelegramConnection(token: string, chatId: string): Pro
       parse_mode: 'Markdown'
     });
 
-    // Persist working credentials to database
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_token', ?)").run(token);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_chat_id', ?)").run(chatId);
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('telegram_enabled', 'true')").run();
+    // Save configuration settings
+    await prisma.setting.upsert({
+      where: { key: 'telegram_token' },
+      update: { value: token },
+      create: { key: 'telegram_token', value: token }
+    });
+
+    await prisma.setting.upsert({
+      where: { key: 'telegram_chat_id' },
+      update: { value: chatId },
+      create: { key: 'telegram_chat_id', value: chatId }
+    });
+
+    await prisma.setting.upsert({
+      where: { key: 'telegram_enabled' },
+      update: { value: 'true' },
+      create: { key: 'telegram_enabled', value: 'true' }
+    });
 
     return { success: true, message: 'Test message sent! Telegram credentials saved.' };
   } catch (err: any) {
