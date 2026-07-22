@@ -69,7 +69,7 @@ router.get('/monitors', async (req: Request, res: Response) => {
     });
 
     const result = await Promise.all(
-      monitors.map(async (m) => {
+      monitors.map(async (m: any) => {
         // Fetch last 20 ping logs for sparkline visualization
         const logs = await prisma.pingLog.findMany({
           where: { monitorId: m.id },
@@ -108,7 +108,7 @@ router.get('/monitors', async (req: Request, res: Response) => {
           responseTimeMs: m.responseTimeMs,
           lastChecked: m.lastChecked?.toISOString() || null,
           uptimePct,
-          history: logs.reverse().map(l => ({
+          history: logs.reverse().map((l: any) => ({
             timestamp: l.createdAt.toLocaleTimeString(),
             latency: l.responseTimeMs,
             status: l.status
