@@ -14,6 +14,7 @@ model Monitor {
   status         String    @default("PENDING")
   statusCode     Int?      @map("status_code")
   responseTimeMs Int       @default(0) @map("response_time_ms")
+  sslExpiryDays  Int?      @map("ssl_expiry_days")
   lastChecked    DateTime? @map("last_checked")
   isActive       Boolean   @default(true) @map("is_active")
   createdAt      DateTime  @default(now()) @map("created_at")

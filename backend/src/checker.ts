@@ -1,4 +1,6 @@
 import axios from 'axios';
+import tls from 'tls';
+import { URL } from 'url';
 import { prisma } from './db/database.js';
 import { sendTelegramAlert } from './services/telegram.js';
 
@@ -10,6 +12,50 @@ export interface PingResult {
   status: 'ONLINE' | 'DEGRADED' | 'DOWN';
   error?: string;
   timestamp: string;
+}
+
+export function checkSslExpiry(targetUrl: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    try {
+      const parsed = new URL(targetUrl);
+      if (parsed.protocol !== 'https:') {
+        return resolve(null); // HTTP does not have SSL/TLS certificate
+      }
+
+      const hostname = parsed.hostname;
+      const port = parsed.port ? parseInt(parsed.port, 10) : 443;
+
+      const socket = tls.connect({
+        host: hostname,
+        port: port,
+        servername: hostname,
+        rejectUnauthorized: false // Connect even if self-signed or expired to retrieve data
+      }, () => {
+        const cert = socket.getPeerCertificate();
+        socket.end();
+        if (cert && cert.valid_to) {
+          const validTo = new Date(cert.valid_to);
+          const now = new Date();
+          const diffMs = validTo.getTime() - now.getTime();
+          const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+          resolve(diffDays);
+        } else {
+          resolve(null);
+        }
+      });
+
+      socket.on('error', () => {
+        resolve(null);
+      });
+
+      socket.setTimeout(5000, () => {
+        socket.destroy();
+        resolve(null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 export async function pingUrl(name: string, url: string, timeoutMs: number = 5000): Promise<PingResult> {
@@ -62,6 +108,7 @@ export async function runAllDatabaseMonitors() {
     }
 
     const res = await pingUrl(monitor.name, monitor.url);
+    const sslExpiryDays = await checkSslExpiry(monitor.url);
     const oldStatus = monitor.status;
 
     // Save check result via Prisma
@@ -71,6 +118,7 @@ export async function runAllDatabaseMonitors() {
         status: res.status,
         statusCode: res.statusCode,
         responseTimeMs: res.responseTimeMs,
+        sslExpiryDays: sslExpiryDays,
         lastChecked: new Date(res.timestamp)
       }
     });
@@ -103,7 +151,29 @@ export async function runAllDatabaseMonitors() {
       });
     }
 
-    console.log(`🔍 [${res.status}] ${monitor.name} (${res.responseTimeMs}ms) Code: ${res.statusCode ?? 'N/A'}`);
+    // SSL Expiry Warning Alert: if certificate is set to expire in less than 14 days, send a warning
+    if (sslExpiryDays !== null && sslExpiryDays <= 14 && monitor.status === 'ONLINE') {
+      const sslAlertKey = `ssl_alert_sent_${monitor.id}`;
+      // Check if we already sent an SSL warning recently to prevent spamming
+      const alreadySent = await prisma.setting.findUnique({ where: { key: sslAlertKey } });
+      if (!alreadySent) {
+        await sendTelegramAlert({
+          siteName: `${monitor.name} (SSL EXPIRING SOON)`,
+          url: monitor.url,
+          status: 'DEGRADED',
+          statusCode: res.statusCode,
+          responseTimeMs: res.responseTimeMs,
+          error: `TLS Certificate is set to expire in ${sslExpiryDays} days! Please renew it soon.`,
+          timestamp: res.timestamp
+        });
+        // Store that we notified so we don't spam every check
+        await prisma.setting.create({
+          data: { key: sslAlertKey, value: 'true' }
+        });
+      }
+    }
+
+    console.log(`🔍 [${res.status}] ${monitor.name} (${res.responseTimeMs}ms) SSL Expiry: ${sslExpiryDays ?? 'N/A'} days | Code: ${res.statusCode ?? 'N/A'}`);
   }
 
   console.log(`\n--------------------------------------------------\n`);

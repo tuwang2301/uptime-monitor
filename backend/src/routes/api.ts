@@ -106,6 +106,7 @@ router.get('/monitors', async (req: Request, res: Response) => {
           status: m.isActive ? m.status : 'PAUSED',
           statusCode: m.statusCode,
           responseTimeMs: m.responseTimeMs,
+          sslExpiryDays: m.sslExpiryDays,
           lastChecked: m.lastChecked?.toISOString() || null,
           isActive: m.isActive,
           uptimePct,

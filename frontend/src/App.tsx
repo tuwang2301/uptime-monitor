@@ -45,6 +45,7 @@ interface MonitorTarget {
   status: 'ONLINE' | 'DEGRADED' | 'DOWN' | 'PENDING' | 'PAUSED';
   statusCode: number | null;
   responseTimeMs: number;
+  sslExpiryDays: number | null;
   lastChecked: string | null;
   uptimePct: number;
   isActive: boolean;
@@ -405,6 +406,17 @@ export function App() {
                           <span className="text-[11px] font-mono text-gray-400 bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800/40 flex items-center gap-1">
                             <Clock className="w-3 h-3" /> {m.intervalSec}s
                           </span>
+                          {m.sslExpiryDays !== null && m.sslExpiryDays !== undefined && (
+                            <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${
+                              m.sslExpiryDays <= 7
+                                ? 'bg-rose-500/15 text-rose-400 border-rose-500/25 animate-pulse'
+                                : m.sslExpiryDays <= 30
+                                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/25'
+                                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25'
+                            }`}>
+                              SSL: {m.sslExpiryDays}d
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-3 mt-1.5 flex-wrap">
                           <a 
