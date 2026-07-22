@@ -1,18 +1,18 @@
 import { PrismaClient } from '@prisma/client';
-import { PrismaBetterSqlite3 } from '@prisma/adapter-better-sqlite3';
-import path from 'path';
-import fs from 'fs';
+import { PrismaPg } from '@prisma/adapter-pg';
+import pg from 'pg';
 import bcrypt from 'bcryptjs';
 
-const dbDir = path.resolve(process.cwd(), 'data');
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
-}
+const connectionString = process.env.DATABASE_URL || '';
 
-// Instantiate adapter directly with url option as required by Prisma 7
-const adapter = new PrismaBetterSqlite3({
-  url: 'file:./data/uptime.db'
+// Create a pg connection pool
+const pool = new pg.Pool({ 
+  connectionString,
+  ssl: connectionString.includes('sslmode=require') || connectionString.includes('neon.tech') 
+    ? { rejectUnauthorized: false } 
+    : undefined
 });
+const adapter = new PrismaPg(pool);
 
 export const prisma = new PrismaClient({ adapter });
 
