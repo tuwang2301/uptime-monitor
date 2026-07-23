@@ -6,7 +6,7 @@ Tài liệu này dùng để lưu lại tiến độ phát triển, cấu trúc 
 
 ## 📌 Trạng Thái Hiện Tại
 - **Milestone**: Nâng cấp dự án lên hệ thống SaaS đa người dùng, chống spam alert 3 lần liên tiếp, giao diện Responsive chuẩn di động.
-- **Tiến độ**: Đã hoàn thành 100% tất cả các giai đoạn bao gồm cả đợt nâng cấp **UI/UX Pro Max** và tối ưu **Responsive Floating Action Button (FAB)** cho mobile.
+- **Tiến độ**: Đã hoàn thành 100% tất cả các giai đoạn bao gồm cả việc tinh chỉnh màu sắc icon trong các modal khớp hoàn toàn với tông màu đen xám Zinc đơn sắc (Zinc Dark Monochromatic Theme).
 - **Trạng thái**: Biên dịch thành công 100% ở cả frontend và backend. Đã push lên GitHub để kích hoạt live deployment.
 - **Consent Text**: `Đồng ý`
 
@@ -36,3 +36,4 @@ Tài liệu này dùng để lưu lại tiến độ phát triển, cấu trúc 
 - [x] Cập nhật Frontend UI (`App.tsx` & `AuthModal.tsx` thay thế LoginModal)
 - [x] Nâng cấp toàn diện giao diện **UI/UX Pro Max** (Slick Zinc Theme, Area Sparklines với Gradients, Search Bar lọc nhanh, Vercel-style Buttons & Status Badges)
 - [x] Tối ưu hóa **Responsive Mobile**: Ẩn nút Add Endpoint trên header di động, thay thế bằng **Floating Action Button (FAB)** tròn nổi cố định ở góc dưới phải màn hình với hiệu ứng glow-indigo sang trọng.
+- [x] Tinh chỉnh màu sắc đồng bộ: Chuyển toàn bộ các icon Indigo (xanh/tím) lệch tông bên trong các modal (`AddMonitorModal`, `EditMonitorModal`, `AuthModal`, `TelegramSettingsModal`) sang tông màu **Zinc tối giản** (`bg-zinc-900 border-zinc-800 text-zinc-400`).
