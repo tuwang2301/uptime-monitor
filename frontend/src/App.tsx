@@ -238,7 +238,7 @@ export function App() {
       {/* Top Notification Bar */}
       <div className="bg-gradient-to-r from-indigo-900/60 via-purple-900/40 to-slate-900 border-b border-indigo-500/20 py-2 px-4 text-center text-xs font-medium text-indigo-200 flex items-center justify-center gap-2">
         <Radio className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-        <span>Enterprise Incident Intelligence Hub connected to Freelancer.com API standard</span>
+        <span>Enterprise Incident Intelligence Hub | Real-time Uptime Engine</span>
       </div>
 
       {/* Main Header */}
@@ -551,7 +551,7 @@ export function App() {
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-indigo-400" />
-            <span>Production Uptime Intelligence Hub | Applied for Freelancer.com Engineering</span>
+            <span>&copy; {new Date().getFullYear()} UptimePulse Technologies. All rights reserved.</span>
           </div>
           <div className="flex items-center gap-4 text-gray-400 font-mono text-[11px]">
             <span>PostgreSQL</span>

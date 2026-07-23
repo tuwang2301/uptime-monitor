@@ -13,6 +13,49 @@ const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_key_change_me_in_prod
 // AUTHENTICATION ENDPOINTS
 // ==========================================
 
+// POST /api/auth/register - Sign Up new user (SaaS Multi-tenant capability)
+router.post('/auth/register', async (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ success: false, error: 'Username and password are required' });
+    }
+
+    // Check if username is already taken
+    const existing = await prisma.user.findUnique({
+      where: { username }
+    });
+
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Username is already taken' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const newUser = await prisma.user.create({
+      data: {
+        username,
+        password: hashedPassword
+      }
+    });
+
+    // Auto-login on successful registration
+    const token = jwt.sign(
+      { id: newUser.id, username: newUser.username },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
+    res.status(201).json({
+      success: true,
+      token,
+      user: { id: newUser.id, username: newUser.username }
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // POST /api/auth/login
 router.post('/auth/login', async (req: Request, res: Response) => {
   try {
@@ -58,19 +101,34 @@ router.get('/auth/me', requireAuth, (req: AuthenticatedRequest, res: Response) =
 
 
 // ==========================================
-// PUBLIC MONITOR ENDPOINTS (Anyone can view status)
+// PUBLIC MONITOR ENDPOINTS (Scoped or Showcase Demo)
 // ==========================================
 
-// GET /api/monitors - Get all monitored services with history & calculated SLA %
+// GET /api/monitors - Get monitored services for authenticated user, or default demo user
 router.get('/monitors', async (req: Request, res: Response) => {
   try {
+    let userId = 1; // Default to demo admin user (ID 1)
+    
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        if (decoded && decoded.id) {
+          userId = decoded.id;
+        }
+      } catch {
+        // Fall back to demo user on invalid token
+      }
+    }
+
     const monitors = await prisma.monitor.findMany({
+      where: { userId },
       orderBy: { id: 'desc' }
     });
 
     const result = await Promise.all(
       monitors.map(async (m) => {
-        // Fetch last 20 ping logs for sparkline visualization
         const logs = await prisma.pingLog.findMany({
           where: { monitorId: m.id },
           take: 20,
@@ -82,7 +140,6 @@ router.get('/monitors', async (req: Request, res: Response) => {
           }
         });
 
-        // Calculate SLA %
         const totalPings = await prisma.pingLog.count({
           where: { monitorId: m.id }
         });
@@ -125,23 +182,41 @@ router.get('/monitors', async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/stats - Global Dashboard Stats calculated from Prisma
+// GET /api/stats - Global Dashboard Stats for authenticated or demo user
 router.get('/stats', async (req: Request, res: Response) => {
   try {
-    const total = await prisma.monitor.count();
-    const online = await prisma.monitor.count({ where: { status: 'ONLINE', isActive: true } });
-    const degraded = await prisma.monitor.count({ where: { status: 'DEGRADED', isActive: true } });
-    const down = await prisma.monitor.count({ where: { status: 'DOWN', isActive: true } });
+    let userId = 1;
+    
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.split(' ')[1];
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET) as any;
+        if (decoded && decoded.id) {
+          userId = decoded.id;
+        }
+      } catch {}
+    }
+
+    const total = await prisma.monitor.count({ where: { userId } });
+    const online = await prisma.monitor.count({ where: { status: 'ONLINE', isActive: true, userId } });
+    const degraded = await prisma.monitor.count({ where: { status: 'DEGRADED', isActive: true, userId } });
+    const down = await prisma.monitor.count({ where: { status: 'DOWN', isActive: true, userId } });
 
     const avgLatencyRes = await prisma.monitor.aggregate({
-      where: { responseTimeMs: { gt: 0 }, isActive: true },
+      where: { responseTimeMs: { gt: 0 }, isActive: true, userId },
       _avg: { responseTimeMs: true }
     });
     const avgLatency = avgLatencyRes._avg.responseTimeMs || 0;
 
-    const totalLogs = await prisma.pingLog.count();
+    const totalLogs = await prisma.pingLog.count({
+      where: { monitor: { userId } }
+    });
     const onlineLogs = await prisma.pingLog.count({
-      where: { status: { not: 'DOWN' } }
+      where: { 
+        status: { not: 'DOWN' },
+        monitor: { userId }
+      }
     });
     
     const overallUptimePct = totalLogs > 0
@@ -166,13 +241,14 @@ router.get('/stats', async (req: Request, res: Response) => {
 
 
 // ==========================================
-// SECURED ADMIN ENDPOINTS (Require Authentication)
+// SECURED ADMIN ENDPOINTS (Require Authentication + Ownership Scoping)
 // ==========================================
 
 // POST /api/monitors - Add new monitor
-router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
+router.post('/monitors', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { name, url, intervalSec } = req.body;
+    const userId = req.user.id;
 
     if (!name || !url) {
       return res.status(400).json({ success: false, error: 'Name and URL are required' });
@@ -183,7 +259,8 @@ router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
         name,
         url,
         intervalSec: intervalSec ? parseInt(String(intervalSec), 10) : 60,
-        status: 'PENDING'
+        status: 'PENDING',
+        userId
       }
     });
 
@@ -217,19 +294,20 @@ router.post('/monitors', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-// PATCH /api/monitors/:id - Update monitor properties (pause/resume or intervalSec)
-router.patch('/monitors/:id', requireAuth, async (req: Request, res: Response) => {
+// PATCH /api/monitors/:id - Update monitor properties (scoped to logged-in user)
+router.patch('/monitors/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const monitorId = parseInt(String(id), 10);
     const { name, url, intervalSec, isActive } = req.body;
+    const userId = req.user.id;
 
     if (isNaN(monitorId)) {
       return res.status(400).json({ success: false, error: 'Invalid ID format' });
     }
 
     const updated = await prisma.monitor.update({
-      where: { id: monitorId },
+      where: { id: monitorId, userId },
       data: {
         name,
         url,
@@ -244,18 +322,19 @@ router.patch('/monitors/:id', requireAuth, async (req: Request, res: Response) =
   }
 });
 
-// DELETE /api/monitors/:id - Remove monitor
-router.delete('/monitors/:id', requireAuth, async (req: Request, res: Response) => {
+// DELETE /api/monitors/:id - Remove monitor (scoped to logged-in user)
+router.delete('/monitors/:id', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const monitorId = parseInt(String(id), 10);
+    const userId = req.user.id;
 
     if (isNaN(monitorId)) {
       return res.status(400).json({ success: false, error: 'Invalid ID format' });
     }
 
     await prisma.monitor.delete({
-      where: { id: monitorId }
+      where: { id: monitorId, userId }
     });
 
     res.json({ success: true, message: 'Monitor deleted successfully' });
@@ -264,18 +343,19 @@ router.delete('/monitors/:id', requireAuth, async (req: Request, res: Response) 
   }
 });
 
-// POST /api/monitors/:id/ping - Manual trigger ping
-router.post('/monitors/:id/ping', requireAuth, async (req: Request, res: Response) => {
+// POST /api/monitors/:id/ping - Manual trigger ping (scoped to logged-in user)
+router.post('/monitors/:id/ping', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
     const monitorId = parseInt(String(id), 10);
+    const userId = req.user.id;
 
     if (isNaN(monitorId)) {
       return res.status(400).json({ success: false, error: 'Invalid ID format' });
     }
 
     const monitor = await prisma.monitor.findUnique({
-      where: { id: monitorId }
+      where: { id: monitorId, userId }
     });
 
     if (!monitor) {

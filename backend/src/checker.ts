@@ -19,7 +19,7 @@ export function checkSslExpiry(targetUrl: string): Promise<number | null> {
     try {
       const parsed = new URL(targetUrl);
       if (parsed.protocol !== 'https:') {
-        return resolve(null); // HTTP does not have SSL/TLS certificate
+        return resolve(null);
       }
 
       const hostname = parsed.hostname;
@@ -29,7 +29,7 @@ export function checkSslExpiry(targetUrl: string): Promise<number | null> {
         host: hostname,
         port: port,
         servername: hostname,
-        rejectUnauthorized: false // Connect even if self-signed or expired to retrieve data
+        rejectUnauthorized: false
       }, () => {
         const cert = socket.getPeerCertificate();
         socket.end();
@@ -109,16 +109,34 @@ export async function runAllDatabaseMonitors() {
 
     const res = await pingUrl(monitor.name, monitor.url);
     const sslExpiryDays = await checkSslExpiry(monitor.url);
+    
     const oldStatus = monitor.status;
+    let oldConsecutiveFailures = monitor.consecutiveFailures;
+    let newConsecutiveFailures = oldConsecutiveFailures;
+
+    if (res.status === 'DOWN') {
+      newConsecutiveFailures += 1;
+    } else {
+      newConsecutiveFailures = 0;
+    }
+
+    // Determine if we should set status to DOWN. 
+    // To prevent false positives, we only transition the official monitor status to DOWN
+    // when it fails 3 times consecutively. Until then, it stays as its previous status (e.g. ONLINE).
+    let targetStatus = res.status;
+    if (res.status === 'DOWN' && newConsecutiveFailures < 3 && oldStatus === 'ONLINE') {
+      targetStatus = 'ONLINE'; // Stay ONLINE until threshold is reached
+    }
 
     // Save check result via Prisma
     await prisma.monitor.update({
       where: { id: monitor.id },
       data: {
-        status: res.status,
+        status: targetStatus,
         statusCode: res.statusCode,
         responseTimeMs: res.responseTimeMs,
         sslExpiryDays: sslExpiryDays,
+        consecutiveFailures: newConsecutiveFailures,
         lastChecked: new Date(res.timestamp)
       }
     });
@@ -134,27 +152,37 @@ export async function runAllDatabaseMonitors() {
       }
     });
 
-    // Spam prevention: send Telegram alert ONLY on status transition
-    const statusChanged = oldStatus !== 'PENDING' && oldStatus !== res.status;
-    const initialFailure = oldStatus === 'PENDING' && res.status !== 'ONLINE';
-
-    if (statusChanged || initialFailure) {
+    // Alert Transition Logic:
+    // 1. Alert sập (DOWN) ONLY when consecutiveFailures reaches EXACTLY 3 (incident started)
+    if (res.status === 'DOWN' && newConsecutiveFailures === 3) {
       await sendTelegramAlert({
         siteName: monitor.name,
         url: monitor.url,
-        status: res.status,
-        oldStatus: oldStatus !== 'PENDING' ? oldStatus : undefined,
+        status: 'DOWN',
+        oldStatus: 'ONLINE',
         statusCode: res.statusCode,
         responseTimeMs: res.responseTimeMs,
-        error: res.error,
+        error: `${res.error || 'HTTP status ' + res.statusCode} (Failed 3 consecutive times)`,
+        timestamp: res.timestamp
+      });
+    }
+
+    // 2. Alert phục hồi (ONLINE) ONLY if it was previously confirmed DOWN (consecutiveFailures >= 3 or monitor.status was DOWN)
+    if (res.status === 'ONLINE' && oldStatus === 'DOWN') {
+      await sendTelegramAlert({
+        siteName: monitor.name,
+        url: monitor.url,
+        status: 'ONLINE',
+        oldStatus: 'DOWN',
+        statusCode: res.statusCode,
+        responseTimeMs: res.responseTimeMs,
         timestamp: res.timestamp
       });
     }
 
     // SSL Expiry Warning Alert: if certificate is set to expire in less than 14 days, send a warning
-    if (sslExpiryDays !== null && sslExpiryDays <= 14 && monitor.status === 'ONLINE') {
+    if (sslExpiryDays !== null && sslExpiryDays <= 14 && targetStatus === 'ONLINE') {
       const sslAlertKey = `ssl_alert_sent_${monitor.id}`;
-      // Check if we already sent an SSL warning recently to prevent spamming
       const alreadySent = await prisma.setting.findUnique({ where: { key: sslAlertKey } });
       if (!alreadySent) {
         await sendTelegramAlert({
@@ -166,14 +194,13 @@ export async function runAllDatabaseMonitors() {
           error: `TLS Certificate is set to expire in ${sslExpiryDays} days! Please renew it soon.`,
           timestamp: res.timestamp
         });
-        // Store that we notified so we don't spam every check
         await prisma.setting.create({
           data: { key: sslAlertKey, value: 'true' }
         });
       }
     }
 
-    console.log(`🔍 [${res.status}] ${monitor.name} (${res.responseTimeMs}ms) SSL Expiry: ${sslExpiryDays ?? 'N/A'} days | Code: ${res.statusCode ?? 'N/A'}`);
+    console.log(`🔍 [${targetStatus}] ${monitor.name} (${res.responseTimeMs}ms) SSL Expiry: ${sslExpiryDays ?? 'N/A'} days | Failures: ${newConsecutiveFailures}/3 | Code: ${res.statusCode ?? 'N/A'}`);
   }
 
   console.log(`\n--------------------------------------------------\n`);
