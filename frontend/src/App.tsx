@@ -26,7 +26,9 @@ import {
   Info,
   CheckCircle,
   X,
-  Clock
+  Clock,
+  Search,
+  Settings
 } from 'lucide-react';
 import { StatusBadge } from './components/StatusBadge';
 import { AddMonitorModal } from './components/AddMonitorModal';
@@ -35,6 +37,7 @@ import { LoginModal } from './components/LoginModal';
 import { EditMonitorModal } from './components/EditMonitorModal';
 import { ConfirmModal } from './components/ConfirmModal';
 import { SparklineChart } from './components/SparklineChart';
+
 axios.defaults.baseURL = (import.meta as any).env.VITE_API_BASE_URL || '';
 
 interface MonitorTarget {
@@ -69,6 +72,7 @@ interface ToastMessage {
 
 export function App() {
   const [monitors, setMonitors] = useState<MonitorTarget[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [stats, setStats] = useState<SystemStats>({
     totalMonitors: 0,
     onlineMonitors: 0,
@@ -152,7 +156,7 @@ export function App() {
     localStorage.setItem('token', token);
     axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
     setUser(username);
-    showToast(`Signed in successfully as Administrator`, 'success');
+    showToast(`Signed in as ${username}`, 'success');
     fetchData();
   };
 
@@ -160,17 +164,17 @@ export function App() {
     localStorage.removeItem('token');
     delete axios.defaults.headers.common['Authorization'];
     setUser(null);
-    showToast('Signed out of Administrator session', 'info');
+    showToast('Signed out of session', 'info');
   };
 
   const handleManualPing = async (id: string) => {
     setRefreshingId(id);
     try {
       await axios.post(`/api/monitors/${id}/ping`);
-      showToast('Manual health check completed successfully', 'success');
+      showToast('Health check completed', 'success');
       await fetchData();
     } catch (err) {
-      showToast('Unauthorized or manual check failed', 'error');
+      showToast('Manual check failed', 'error');
     } finally {
       setRefreshingId(null);
     }
@@ -179,10 +183,10 @@ export function App() {
   const handleAddMonitor = async (name: string, url: string, intervalSec: number) => {
     try {
       await axios.post('/api/monitors', { name, url, intervalSec });
-      showToast(`Added new monitor: ${name}`, 'success');
+      showToast(`Added monitor: ${name}`, 'success');
       await fetchData();
     } catch (err) {
-      showToast('Unauthorized or failed to add monitor', 'error');
+      showToast('Failed to add monitor', 'error');
     }
   };
 
@@ -192,7 +196,7 @@ export function App() {
       showToast(`Configuration updated for ${name}`, 'success');
       await fetchData();
     } catch (err) {
-      showToast('Failed to update monitor settings', 'error');
+      showToast('Failed to update monitor', 'error');
     }
   };
 
@@ -200,7 +204,7 @@ export function App() {
     const actionText = currentActive ? 'Pause' : 'Resume';
     openConfirm(
       `${actionText} Monitor?`,
-      `Are you sure you want to ${actionText.toLowerCase()} monitoring for ${name}? Notifications for this target will be suspended.`,
+      `Suspend real-time checks and alert notifications for ${name}?`,
       async () => {
         try {
           await axios.patch(`/api/monitors/${id}`, { isActive: !currentActive });
@@ -218,11 +222,11 @@ export function App() {
   const handleDeleteMonitor = (id: string, name: string) => {
     openConfirm(
       'Remove Monitor?',
-      `Are you sure you want to permanently delete ${name}? This will erase all logs and SLA metric history from the PostgreSQL database.`,
+      `Permanently erase ${name} and delete all logs from the PostgreSQL database?`,
       async () => {
         try {
           await axios.delete(`/api/monitors/${id}`);
-          showToast(`Deleted monitor: ${name}`, 'success');
+          showToast(`Removed monitor: ${name}`, 'success');
           await fetchData();
         } catch (err) {
           showToast('Failed to delete monitor target', 'error');
@@ -233,236 +237,255 @@ export function App() {
     );
   };
 
+  // Client-side search filtering
+  const filteredMonitors = monitors.filter(m => 
+    m.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    m.url.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
   return (
-    <div className="min-h-screen bg-[#070a11] text-gray-100 flex flex-col font-['Inter',sans-serif]">
-      {/* Top Notification Bar */}
-      <div className="bg-gradient-to-r from-indigo-900/60 via-purple-900/40 to-slate-900 border-b border-indigo-500/20 py-2 px-4 text-center text-xs font-medium text-indigo-200 flex items-center justify-center gap-2">
-        <Radio className="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+    <div className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col font-['Inter',sans-serif] selection:bg-zinc-800 selection:text-white">
+      {/* Top Banner Status Bar */}
+      <div className="bg-zinc-950 border-b border-zinc-800/80 py-2 px-4 text-center text-[11px] font-semibold text-zinc-400 tracking-wider flex items-center justify-center gap-2 select-none">
+        <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
         <span>Enterprise Incident Intelligence Hub | Real-time Uptime Engine</span>
       </div>
 
-      {/* Main Header */}
-      <header className="border-b border-gray-800/80 bg-[#0c101c]/90 backdrop-blur-xl sticky top-0 z-40">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      {/* Modern Minimalist Header */}
+      <header className="border-b border-zinc-900 bg-zinc-950/70 backdrop-blur-md sticky top-0 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
           
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/25 ring-1 ring-white/20">
-              <Activity className="w-5 h-5 text-white" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-lg bg-zinc-100 flex items-center justify-center shadow shadow-black">
+              <Activity className="w-4 h-4 text-zinc-950" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
-                <span className="font-extrabold text-lg text-white tracking-tight">UptimePulse</span>
-                <span className="text-[10px] font-mono font-bold tracking-wider px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-400 border border-indigo-500/20">
-                  Production PostgreSQL
+              <div className="flex items-center gap-1.5">
+                <span className="font-bold text-sm tracking-tight text-white">UptimePulse</span>
+                <span className="text-[8px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-800/40">
+                  SaaS
                 </span>
               </div>
-              <p className="text-[11px] text-gray-400 font-medium">Enterprise Health Monitoring & Incident Intelligence</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {user ? (
               <>
                 <button
                   onClick={() => setIsTelegramModalOpen(true)}
-                  className="px-3.5 py-2 bg-gray-800/80 hover:bg-gray-700/80 text-gray-200 hover:text-white rounded-xl text-xs font-semibold flex items-center gap-2 border border-gray-700/60 transition shadow-sm"
+                  className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800/80 text-zinc-300 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 border border-zinc-800 transition"
                 >
-                  <Bot className="w-4 h-4 text-indigo-400" />
+                  <Bot className="w-3.5 h-3.5 text-zinc-400" />
                   <span className="hidden sm:inline">Telegram Alerts</span>
                 </button>
 
                 <button
                   onClick={() => setIsAddModalOpen(true)}
-                  className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold text-xs flex items-center gap-2 shadow-lg shadow-indigo-600/30 transition ring-1 ring-indigo-400/30"
+                  className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-zinc-950 rounded-lg font-bold text-xs flex items-center gap-1 transition"
                 >
-                  <Plus className="w-4 h-4" />
+                  <Plus className="w-3.5 h-3.5" />
                   <span>Add Endpoint</span>
                 </button>
 
                 <button
                   onClick={handleLogout}
-                  className="p-2 text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition border border-transparent hover:border-rose-500/20"
-                  title="Sign Out Admin"
+                  className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/5 rounded-lg transition border border-transparent"
+                  title="Sign Out"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-3.5 h-3.5" />
                 </button>
               </>
             ) : (
               <button
                 onClick={() => setIsLoginModalOpen(true)}
-                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-semibold text-xs flex items-center gap-2 border border-gray-700 transition"
+                className="px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg font-bold text-xs flex items-center gap-1.5 border border-zinc-800 transition"
               >
-                <LogIn className="w-4 h-4 text-indigo-400" />
-                <span>Admin Login</span>
+                <LogIn className="w-3.5 h-3.5 text-zinc-400" />
+                <span>Sign In</span>
               </button>
             )}
 
+            <div className="w-px h-5 bg-zinc-800 mx-1 hidden sm:block" />
+
             <button
               onClick={() => fetchData()}
-              className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-xl transition border border-transparent hover:border-gray-800"
+              className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-900 rounded-lg transition"
               title="Force Refresh Data"
             >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-indigo-400' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-zinc-100' : ''}`} />
             </button>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex-1 w-full space-y-8 animate-fade-in">
         
         {/* Real-time SLA Metrics Overview */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-[#0f1524] p-5 rounded-2xl border border-gray-800/80 shadow-xl relative overflow-hidden group">
-            <div className="absolute top-0 right-0 w-24 h-24 bg-emerald-500/5 rounded-full blur-2xl group-hover:bg-emerald-500/10 transition" />
-            <div className="flex items-center justify-between text-gray-400 mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Global Uptime SLA</span>
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+          <div className="bg-[#121214] p-5 rounded-2xl border border-zinc-900 shadow-sm relative overflow-hidden group transition hover:border-zinc-800/80">
+            <div className="flex items-center justify-between text-zinc-400 mb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Global Uptime SLA</span>
+              <ShieldCheck className="w-4 h-4 text-zinc-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-white tracking-tight">{stats.overallUptimePct}%</span>
-              <span className="text-xs text-emerald-400 font-semibold font-mono">99.9% SLA Target</span>
+              <span className="text-2xl font-black text-white tracking-tight font-mono">{stats.overallUptimePct}%</span>
+              <span className="text-[10px] text-emerald-500 font-semibold font-mono">99.9% Target</span>
             </div>
           </div>
 
-          <div className="bg-[#0f1524] p-5 rounded-2xl border border-gray-800/80 shadow-xl relative overflow-hidden group">
-            <div className="flex items-center justify-between text-gray-400 mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Active Services</span>
-              <Server className="w-4 h-4 text-indigo-400" />
+          <div className="bg-[#121214] p-5 rounded-2xl border border-zinc-900 shadow-sm relative overflow-hidden group transition hover:border-zinc-800/80">
+            <div className="flex items-center justify-between text-zinc-400 mb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Monitors</span>
+              <Server className="w-4 h-4 text-zinc-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-white tracking-tight">{stats.totalMonitors}</span>
-              <span className="text-xs text-indigo-400 font-semibold">{stats.onlineMonitors} Monitoring</span>
+              <span className="text-2xl font-black text-white tracking-tight font-mono">{stats.totalMonitors}</span>
+              <span className="text-[10px] text-zinc-400 font-medium font-mono">{stats.onlineMonitors} Active</span>
             </div>
           </div>
 
-          <div className="bg-[#0f1524] p-5 rounded-2xl border border-gray-800/80 shadow-xl relative overflow-hidden group">
-            <div className="flex items-center justify-between text-gray-400 mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Avg Response Time</span>
-              <Zap className="w-4 h-4 text-amber-400" />
+          <div className="bg-[#121214] p-5 rounded-2xl border border-zinc-900 shadow-sm relative overflow-hidden group transition hover:border-zinc-800/80">
+            <div className="flex items-center justify-between text-zinc-400 mb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Avg Latency</span>
+              <Zap className="w-4 h-4 text-zinc-400" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-white tracking-tight font-mono">{stats.avgLatencyMs} <span className="text-sm font-normal text-gray-400">ms</span></span>
-              <span className="text-xs text-amber-400 font-semibold font-mono">Real-time Avg</span>
+              <span className="text-2xl font-black text-white tracking-tight font-mono">{stats.avgLatencyMs} <span className="text-xs font-normal text-zinc-400">ms</span></span>
+              <span className="text-[10px] text-zinc-400 font-medium font-mono">All servers</span>
             </div>
           </div>
 
-          <div className="bg-[#0f1524] p-5 rounded-2xl border border-gray-800/80 shadow-xl relative overflow-hidden group">
-            <div className="flex items-center justify-between text-gray-400 mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Active Incidents</span>
-              <XCircle className="w-4 h-4 text-rose-400" />
+          <div className="bg-[#121214] p-5 rounded-2xl border border-zinc-900 shadow-sm relative overflow-hidden group transition hover:border-zinc-800/80">
+            <div className="flex items-center justify-between text-zinc-400 mb-2">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Active Incidents</span>
+              <XCircle className="w-4 h-4 text-rose-500" />
             </div>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black text-white tracking-tight">{stats.downMonitors}</span>
-              <span className={`text-xs font-bold ${stats.downMonitors > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-400'}`}>
+              <span className="text-2xl font-black text-white tracking-tight font-mono">{stats.downMonitors}</span>
+              <span className={`text-[10px] font-bold ${stats.downMonitors > 0 ? 'text-rose-400 animate-pulse' : 'text-emerald-500'}`}>
                 {stats.downMonitors > 0 ? 'Downtime Alert' : 'System Healthy'}
               </span>
             </div>
           </div>
         </div>
 
-        {/* Monitored Services Table / Cards */}
+        {/* Monitored Services */}
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-zinc-900 pb-3">
             <div className="flex items-center gap-2">
-              <Database className="w-5 h-5 text-indigo-400" />
-              <h2 className="text-base font-bold text-white tracking-tight">Active Infrastructure Monitors</h2>
+              <Database className="w-4 h-4 text-zinc-400" />
+              <h2 className="text-xs font-bold text-white tracking-wider uppercase">Active Infrastructure</h2>
             </div>
-            <span className="text-xs text-gray-400 font-mono">Auto-polling DB every 10s</span>
+            
+            {/* Search Input Bar */}
+            <div className="relative w-full sm:w-60">
+              <span className="absolute inset-y-0 left-0 flex items-center pl-2.5 text-zinc-500 pointer-events-none">
+                <Search className="w-3.5 h-3.5" />
+              </span>
+              <input
+                type="text"
+                placeholder="Search endpoints..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-zinc-950 border border-zinc-900 rounded-lg text-xs text-white placeholder-zinc-700 focus:outline-none focus:border-zinc-700 transition"
+              />
+            </div>
           </div>
 
-          {monitors.length === 0 ? (
-            <div className="bg-[#0f1524] rounded-2xl p-12 text-center border border-gray-800 shadow-xl">
-              <Terminal className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-              <h3 className="text-lg font-bold text-white">No Endpoints Monitored</h3>
-              {user && <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">Click "Add Endpoint" above to configure your first HTTP/API monitor.</p>}
-              {!user && <p className="text-xs text-gray-400 mt-1 max-w-sm mx-auto">Please login as Administrator to add endpoints.</p>}
+          {filteredMonitors.length === 0 ? (
+            <div className="bg-[#121214] rounded-2xl p-12 text-center border border-zinc-900">
+              <Terminal className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-white">No endpoints found</h3>
+              <p className="text-xs text-zinc-500 mt-1 max-w-sm mx-auto">
+                {searchQuery ? 'Adjust your search query' : (user ? 'Add an endpoint to start monitoring' : 'Login to start configuring')}
+              </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {monitors.map((m) => (
+            <div className="grid grid-cols-1 gap-2.5">
+              {filteredMonitors.map((m) => (
                 <div 
                   key={m.id} 
-                  className={`bg-[#0f1524] rounded-2xl p-5 border transition-all duration-200 shadow-lg ${
+                  className={`bg-[#121214] rounded-xl p-4 border transition duration-200 ${
                     !m.isActive 
-                      ? 'border-gray-800/40 opacity-60' 
-                      : 'border-gray-800/90 hover:border-indigo-500/40'
+                      ? 'border-zinc-900/40 opacity-55' 
+                      : 'border-zinc-900 hover:border-zinc-800'
                   }`}
                 >
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     
                     {/* Left: Info */}
-                    <div className="flex items-start gap-3.5">
-                      <div className="p-3 bg-gray-900/90 rounded-xl border border-gray-800/80 shrink-0 mt-0.5">
+                    <div className="flex items-center gap-3.5 min-w-0">
+                      <div className="p-2 bg-zinc-950/80 rounded-lg border border-zinc-900 shrink-0">
                         <GlobeStatusIcon status={m.isActive ? m.status : 'PAUSED'} />
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2.5 flex-wrap">
-                          <h3 className="text-base font-bold text-white tracking-tight">{m.name}</h3>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <h3 className="text-sm font-bold text-zinc-100 tracking-tight truncate max-w-[150px] sm:max-w-xs">{m.name}</h3>
                           <StatusBadge status={m.isActive ? m.status : 'PAUSED'} />
-                          <span className="text-[11px] font-mono font-semibold text-gray-300 bg-gray-900 px-2 py-0.5 rounded border border-gray-800">
+                          <span className="text-[9px] font-mono font-bold text-zinc-400 bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-900">
                             HTTP {m.statusCode ?? 'N/A'}
                           </span>
-                          <span className="text-[11px] font-mono text-gray-400 bg-gray-900/80 px-2 py-0.5 rounded border border-gray-800/40 flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> {m.intervalSec}s
+                          <span className="text-[9px] font-mono text-zinc-500 bg-zinc-950 px-1.5 py-0.5 rounded border border-zinc-900/60 flex items-center gap-0.5">
+                            <Clock className="w-2.5 h-2.5" /> {m.intervalSec}s
                           </span>
                           {m.sslExpiryDays !== null && m.sslExpiryDays !== undefined && (
-                            <span className={`text-[11px] font-mono font-bold px-2 py-0.5 rounded border flex items-center gap-1 ${
+                            <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
                               m.sslExpiryDays <= 7
-                                ? 'bg-rose-500/15 text-rose-400 border-rose-500/25 animate-pulse'
+                                ? 'bg-rose-500/5 text-rose-400 border-rose-500/10 animate-pulse'
                                 : m.sslExpiryDays <= 30
-                                  ? 'bg-amber-500/15 text-amber-400 border-amber-500/25'
-                                  : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25'
+                                  ? 'bg-amber-500/5 text-amber-400 border-amber-500/10'
+                                  : 'bg-emerald-500/5 text-emerald-400 border-emerald-500/10'
                             }`}>
                               SSL: {m.sslExpiryDays}d
                             </span>
                           )}
                         </div>
-                        <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                           <a 
                             href={m.url} 
                             target="_blank" 
                             rel="noreferrer"
-                            className="text-xs font-mono text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition"
+                            className="text-xs font-mono text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition"
                           >
                             {m.url}
-                            <ExternalLink className="w-3 h-3" />
+                            <ExternalLink className="w-2.5 h-2.5" />
                           </a>
-                          <span className="text-[11px] text-gray-400 font-mono">Last check: {m.lastChecked ? new Date(m.lastChecked).toLocaleTimeString() : 'Pending'}</span>
+                          <span className="text-zinc-600 font-mono text-[10px] hidden sm:inline">•</span>
+                          <span className="text-zinc-500 font-mono text-[10px]">
+                            Check: {m.lastChecked ? new Date(m.lastChecked).toLocaleTimeString() : 'Pending'}
+                          </span>
                         </div>
                       </div>
                     </div>
 
-                    {/* Middle: Sparkline Telemetry Graph & Metrics */}
-                    <div className="flex items-center gap-6 self-start md:self-center">
+                    {/* Middle: Metrics & Sparklines */}
+                    <div className="flex items-center gap-6 justify-between md:justify-end shrink-0">
                       <div className="text-right">
-                        <div className="text-[11px] text-gray-400 font-medium">Latency</div>
-                        <div className="text-sm font-bold text-white font-mono">{m.isActive ? `${m.responseTimeMs} ms` : 'N/A'}</div>
+                        <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Latency</div>
+                        <div className="text-xs font-bold text-zinc-200 font-mono">{m.isActive ? `${m.responseTimeMs} ms` : '—'}</div>
                       </div>
 
                       <div className="text-right">
-                        <div className="text-[11px] text-gray-400 font-medium">SLA Uptime</div>
-                        <div className="text-sm font-bold text-emerald-400 font-mono">{m.uptimePct}%</div>
+                        <div className="text-[9px] text-zinc-500 font-bold uppercase tracking-wider">Uptime SLA</div>
+                        <div className="text-xs font-bold text-emerald-500 font-mono">{m.uptimePct}%</div>
                       </div>
                       
-                      {/* Telemetry Sparkline Chart */}
-                      <div className="hidden lg:block bg-gray-900/80 p-2 rounded-xl border border-gray-800">
+                      {/* Premium Sparkline Area Chart */}
+                      <div className="hidden lg:block bg-zinc-950 p-1.5 rounded-lg border border-zinc-900">
                         <SparklineChart data={m.isActive ? m.history : []} />
                       </div>
                     </div>
 
                     {/* Right: Actions */}
-                    <div className="flex items-center gap-2 self-end md:self-center">
+                    <div className="flex items-center gap-1 justify-end shrink-0 border-t border-zinc-900 pt-3 md:pt-0 md:border-0">
                       {user ? (
                         <>
                           <button
                             onClick={() => handleToggleActive(m.id, m.name, m.isActive)}
-                            className={`p-2 rounded-xl transition border ${
-                              m.isActive 
-                                ? 'text-amber-400 hover:bg-amber-500/10 border-transparent' 
-                                : 'text-emerald-400 hover:bg-emerald-500/10 border-transparent'
-                            }`}
-                            title={m.isActive ? 'Pause Monitoring' : 'Resume Monitoring'}
+                            className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 rounded-lg transition"
+                            title={m.isActive ? 'Pause' : 'Resume'}
                           >
                             {m.isActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                           </button>
@@ -472,8 +495,8 @@ export function App() {
                               setEditingMonitor(m);
                               setIsEditModalOpen(true);
                             }}
-                            className="p-2 text-gray-400 hover:text-indigo-400 hover:bg-indigo-500/10 rounded-xl transition border border-transparent"
-                            title="Edit Configuration"
+                            className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40 rounded-lg transition"
+                            title="Edit"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -481,24 +504,24 @@ export function App() {
                           <button
                             onClick={() => handleManualPing(m.id)}
                             disabled={refreshingId === m.id || !m.isActive}
-                            className="px-3 py-1.5 text-xs font-bold text-gray-200 hover:text-white bg-gray-900 hover:bg-gray-800 rounded-xl transition flex items-center gap-1.5 border border-gray-800 disabled:opacity-30"
-                            title="Instant Health Check"
+                            className="px-2.5 py-1 text-[10px] font-bold text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-850 rounded-lg transition flex items-center gap-1 border border-zinc-800 disabled:opacity-30"
+                            title="Ping"
                           >
-                            <RefreshCw className={`w-3.5 h-3.5 ${refreshingId === m.id ? 'animate-spin text-indigo-400' : ''}`} />
-                            <span>Ping</span>
+                            <RefreshCw className={`w-3 h-3 ${refreshingId === m.id ? 'animate-spin' : ''}`} />
+                            <span>Check</span>
                           </button>
 
                           <button
                             onClick={() => handleDeleteMonitor(m.id, m.name)}
-                            className="p-2 text-gray-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-xl transition border border-transparent"
-                            title="Remove Monitor"
+                            className="p-1.5 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/5 rounded-lg transition"
+                            title="Delete"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </>
                       ) : (
-                        <span className="text-[10px] text-gray-500 flex items-center gap-1">
-                          <Lock className="w-3 h-3" /> Read-Only
+                        <span className="text-[9px] font-semibold text-zinc-600 flex items-center gap-1 select-none">
+                          <Lock className="w-3 h-3 text-zinc-700" /> READ-ONLY
                         </span>
                       )}
                     </div>
@@ -512,16 +535,16 @@ export function App() {
       </main>
 
       {/* Toast Notification Container */}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm w-full pointer-events-none">
+      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-xs w-full pointer-events-none">
         {toasts.map((t) => (
           <div
             key={t.id}
-            className={`p-4 rounded-xl shadow-2xl border flex items-start gap-3 pointer-events-auto transition-all duration-300 animate-slide-in ${
+            className={`p-3.5 rounded-xl shadow-2xl border flex items-start gap-2.5 pointer-events-auto transition-all duration-300 animate-slide-in ${
               t.type === 'success'
                 ? 'bg-emerald-950/90 text-emerald-300 border-emerald-500/30'
                 : t.type === 'error'
                   ? 'bg-rose-950/90 text-rose-300 border-rose-500/30'
-                  : 'bg-indigo-950/90 text-indigo-300 border-indigo-500/30'
+                  : 'bg-zinc-900/90 text-zinc-300 border-zinc-800'
             }`}
           >
             <div className="mt-0.5 shrink-0">
@@ -530,7 +553,7 @@ export function App() {
               ) : t.type === 'error' ? (
                 <XCircle className="w-4 h-4 text-rose-400" />
               ) : (
-                <Info className="w-4 h-4 text-indigo-400" />
+                <Info className="w-4 h-4 text-zinc-400" />
               )}
             </div>
             <div className="flex-1 text-xs font-semibold leading-relaxed">
@@ -538,22 +561,22 @@ export function App() {
             </div>
             <button
               onClick={() => setToasts(prev => prev.filter(item => item.id !== t.id))}
-              className="text-gray-400 hover:text-white shrink-0 p-0.5 rounded"
+              className="text-zinc-400 hover:text-white shrink-0 p-0.5 rounded"
             >
-              <X className="w-3.5 h-3.5" />
+              <X className="w-3 h-3" />
             </button>
           </div>
         ))}
       </div>
 
-      {/* Footer */}
-      <footer className="border-t border-gray-800/80 py-6 text-center text-xs text-gray-400 bg-[#0c101c]/80">
+      {/* Rebranded Minimalist Footer */}
+      <footer className="border-t border-zinc-900 py-6 text-center text-xs text-zinc-500 bg-zinc-950/50 mt-auto select-none">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-indigo-400" />
+            <Globe className="w-3.5 h-3.5 text-zinc-600" />
             <span>&copy; {new Date().getFullYear()} UptimePulse Technologies. All rights reserved.</span>
           </div>
-          <div className="flex items-center gap-4 text-gray-400 font-mono text-[11px]">
+          <div className="flex items-center gap-4 font-mono text-[10px] text-zinc-600">
             <span>PostgreSQL</span>
             <span>•</span>
             <span>Telegram Bot</span>
@@ -605,10 +628,10 @@ export function App() {
 
 function GlobeStatusIcon({ status }: { status: string }) {
   switch (status) {
-    case 'ONLINE': return <CheckCircle2 className="w-5 h-5 text-emerald-400" />;
-    case 'DEGRADED': return <AlertTriangle className="w-5 h-5 text-amber-400" />;
-    case 'DOWN': return <XCircle className="w-5 h-5 text-rose-400" />;
-    case 'PAUSED': return <Pause className="w-5 h-5 text-amber-500 animate-pulse" />;
-    default: return <Activity className="w-5 h-5 text-indigo-400" />;
+    case 'ONLINE': return <CheckCircle2 className="w-4 h-4 text-emerald-400" />;
+    case 'DEGRADED': return <AlertTriangle className="w-4 h-4 text-amber-500" />;
+    case 'DOWN': return <XCircle className="w-4 h-4 text-rose-500" />;
+    case 'PAUSED': return <Pause className="w-4 h-4 text-zinc-500" />;
+    default: return <Activity className="w-4 h-4 text-zinc-600" />;
   }
 }
