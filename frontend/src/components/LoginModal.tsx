@@ -90,7 +90,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({ isOpen, onClose, onLogin
         </div>
 
         <div className="flex flex-col items-center mb-6">
-          <div className="p-2.5 bg-indigo-500/5 text-indigo-400 rounded-xl border border-indigo-500/10 mb-3">
+          <div className="p-2.5 bg-zinc-900 text-zinc-400 rounded-xl border border-zinc-800 mb-3">
             {isRegisterMode ? <UserPlus className="w-5 h-5" /> : <Lock className="w-5 h-5" />}
           </div>
           <h2 className="text-base font-bold text-white tracking-tight">

@@ -52,7 +52,7 @@ export const EditMonitorModal: React.FC<EditMonitorModalProps> = ({ isOpen, onCl
         </button>
 
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 bg-indigo-500/5 text-indigo-400 rounded-xl border border-indigo-500/10">
+          <div className="p-2.5 bg-zinc-900 text-zinc-400 rounded-xl border border-zinc-800">
             <Edit className="w-5 h-5" />
           </div>
           <div>
