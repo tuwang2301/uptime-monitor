@@ -282,7 +282,7 @@ export function App() {
 
                 <button
                   onClick={() => setIsAddModalOpen(true)}
-                  className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-zinc-950 rounded-lg font-bold text-xs flex items-center gap-1 transition"
+                  className="px-3 py-1.5 bg-zinc-100 hover:bg-white text-zinc-950 rounded-lg font-bold text-xs hidden sm:flex items-center gap-1 transition"
                 >
                   <Plus className="w-3.5 h-3.5" />
                   <span>Add Endpoint</span>
@@ -585,6 +585,17 @@ export function App() {
           </div>
         </div>
       </footer>
+
+      {/* Floating Action Button (FAB) for Mobile Add Endpoint */}
+      {user && (
+        <button
+          onClick={() => setIsAddModalOpen(true)}
+          className="fixed bottom-6 right-6 z-40 w-12 h-12 bg-zinc-100 hover:bg-white text-zinc-950 rounded-full flex items-center justify-center shadow-2xl active:scale-95 transition-all duration-200 sm:hidden border border-zinc-200/10 glow-indigo"
+          title="Add Endpoint"
+        >
+          <Plus className="w-6 h-6" />
+        </button>
+      )}
 
       <AddMonitorModal
         isOpen={isAddModalOpen}
